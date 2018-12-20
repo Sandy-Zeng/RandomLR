@@ -49,7 +49,7 @@ convergence_epoch = 0
 random_portion = dis_parameter2
 
 # Training parameters
-exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_%.2f_ResNet32_WRSGD' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,linear_init_lr,random_portion)
+exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_%.2f_ResNet32_WRSGD_20' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,linear_init_lr,random_portion)
 if((work_path/'TB_Log'/exp_name).exists()):
     print('Already Finished!')
     exit()
@@ -90,11 +90,11 @@ print(x_train.shape[0], 'train samples')
 print(x_test.shape[0], 'test samples')
 print('y_train shape:', y_train.shape)
 
-Te = 10
+Te = 20
 tt = 0
 t0 = math.pi/2.0
 TeNext = Te
-multFactor = 2
+multFactor = 1
 cyc = True
 def lr_schedule(epoch):
     def U(tmp_lr):

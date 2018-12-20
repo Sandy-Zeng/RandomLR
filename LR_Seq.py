@@ -3,43 +3,38 @@ from pathlib import *
 from keras.callbacks import LambdaCallback
 import LR_resNet
 from LR_resNet import *
-from CLR_callback import CyclicLR
 import time
 from keras.optimizers import Adam,SGD,RMSprop,Adagrad
 import random
-import tensorflow as tf
 
-if(len(sys.argv)>11):
-    print('Right Parameter')
+if(len(sys.argv)>8):
     dataset_name = (sys.argv[1])
     batch_size = int(sys.argv[2])
     epochs = int(sys.argv[3])
     optimizer = (sys.argv[4])
-    lr_schedule_method = (sys.argv[5])
-    distribution_method = (sys.argv[6])
-    dis_parameter1 = float(sys.argv[7])
-    dis_parameter2 = float(sys.argv[8])
-    linear_init_lr = float(sys.argv[9])
-    TB_Logs_Path = (sys.argv[10])
-    work_path_name = (sys.argv[11]).strip('\r\n')
+    distribution_method = (sys.argv[5])
+    dis_parameter1 = float(sys.argv[6])
+    dis_parameter2 = float(sys.argv[7])
+    work_path_name = (sys.argv[8])
+    init_lr = float(sys.argv[9])
+    random_ratio = float(sys.argv[10])
 else:
     print('Wrong Params')
     # exit()
     # dataset_name = 'MNIST'
     dataset_name = 'CIFAR10'
-    batch_size = 64  # orig paper trained all networks with batch_size=128
-    epochs = 20
+    batch_size = 128  # orig paper trained all networks with batch_size=128
+    epochs = 50
     optimizer = 'Adam'
-    lr_schedule_method = 'clr'
-    distribution_method = 'RL'
+    distribution_method = 'N'
     dis_parameter1 = 0.2
     dis_parameter2 = 0.8
     work_path_name = 'Default'
-    linear_init_lr = 1e-3
-    TB_Logs_Path = 'TB_Log'
-
+    init_lr = 1e-3
 
 work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
+# work_path = Path('/unsullied/sharefs/ouyangzhihao/Share/LSTM/Text_Generation_Capacity/Logs/RandomLR_12_8_All')
+
 work_path = work_path/work_path_name
 
 # work_path = Path('/unsullied/sharefs/ouyangzhihao/DataRoot/Exp/HTB/LID_Research/LR_Random')
@@ -47,14 +42,14 @@ max_acc_log_path = work_path/'res.txt'
 convergence_epoch = 0
 
 # Training parameters
-exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_ResNet32_Log' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,linear_init_lr)
+exp_name = 'Sort%s_%d_%d_%s_%s_%.2f_%.2f_%d_ResNet32' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,random_ratio)
 if((work_path/'TB_Log'/exp_name).exists()):
     print('Already Finished!')
     exit()
-
 ##### Train
 
 import keras
+import torch
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from keras.callbacks import ReduceLROnPlateau, LambdaCallback
@@ -88,78 +83,65 @@ print(x_train.shape[0], 'train samples')
 print(x_test.shape[0], 'test samples')
 print('y_train shape:', y_train.shape)
 
+def get_lr_seq(epochs, lr_type='Base', sort_lr = True):
+    #In order to generate true random number, we have to generate multiple random numbers at the same time
+    np.random.seed(int(time.time()))
+    def U(tmp_lr_seq):
+        factor = random_ratio
+        random_arr = np.random.random(len(tmp_lr_seq))
+        tmp_lr_seq = tmp_lr_seq * factor * random_arr
+        return tmp_lr_seq
+
+    def N(tmp_lr_seq, mu=0, sigma=1):
+        factor = 1e1
+        random_arr = np.random.normal(mu, sigma, epochs)
+        random_arr = abs(random_arr)
+        tmp_lr_seq = tmp_lr_seq * random_arr * factor
+        return tmp_lr_seq
+
+    def Base(tmp_lr_seq): return tmp_lr_seq
+
+    lr_seq = []
+    for epoch in range(1,epochs+1):
+        lr = init_lr
+        if epoch >= epochs * 0.9:
+            lr *= 0.5e-3
+        elif epoch >= epochs * 0.8:
+            lr *= 1e-3
+        elif epoch >= epochs * 0.6:
+            lr *= 1e-2
+        elif epoch >= epochs * 0.4:
+            lr *= 1e-1
+        lr_seq.append(lr)
+    # transfer to numpy in order to support element wise multiple
+    lr_seq = np.array(lr_seq)
+    if(lr_type == 'U'):
+        lr_seq = U(lr_seq)
+    elif(lr_type == 'N'):
+        lr_seq = N(lr_seq)
+
+    # sort in descending order
+    if(sort_lr):
+        lr_seq[::-1].sort()
+    return lr_seq
+
+lr_seq = get_lr_seq(epochs, lr_type=distribution_method, sort_lr=True)
 def lr_schedule(epoch):
-    def U(tmp_lr):
-        factor = 1e2
-        np.random.seed(int(time.time()))
-        if linear_init_lr == 1e-1:
-            tmp_lr = np.random.random() * tmp_lr
-        if linear_init_lr == 1e-2:
-            tmp_lr = np.random.random() * tmp_lr
-        if linear_init_lr < 1e-2:
-            tmp_lr = np.log(np.random.random() * tmp_lr * 10)
-        # tmp_lr = np.random.random() * tmp_lr
-        return tmp_lr
-    def N(tmp_lr,mu=0,sigma=1):
-        np.random.seed(int(time.time()))
-        tmp_lr_factor = np.random.normal(mu,sigma)
-        tmp_lr_factor = abs(tmp_lr_factor)
-        tmp_lr *= tmp_lr_factor
-        return tmp_lr
-
-    #Learning Rate Schedule
-    lr = linear_init_lr
-    if epoch >= epochs * 0.9:
-        lr *= 0.5e-3
-    elif epoch >= epochs * 0.8:
-        lr *= 1e-3
-    elif epoch >= epochs * 0.6:
-        lr *= 1e-2
-    elif epoch >= epochs * 0.4:
-        lr *= 1e-1
-
-    if distribution_method =='U':
-        lr = U(lr)
-    elif distribution_method =='N':
-        lr = N(lr,dis_parameter1,dis_parameter2)
-    elif distribution_method =='Base':
-        lr = lr
+    lr = lr_seq[epoch-1]
     print('Learning rate: ', lr)
     return lr
-
-init_lr = 0.
-base_lr = 0.001
-max_lr = 0.
-if optimizer=='Adam':
-    max_lr = 0.006
-elif optimizer=='SGD':
-    max_lr = 0.1
-elif optimizer =='RMSprop':
-    max_lr = 0.006
-elif optimizer == 'Adagrad':
-    max_lr = 0.1
-
-if lr_schedule_method == 'clr':
-    clr = CyclicLR(base_lr=base_lr, max_lr=max_lr,
-                   step_size=2000., mode='triangular2',
-                   distribution_method=distribution_method)
-    init_lr = 0.001
-else:
-    init_lr = lr_schedule(0)
-
-
 
 #ResNet:
 # model = keras.applications.resnet50.ResNet50(input_shape=None, include_top=True, weights=None)
 model = resnet_v1(input_shape=input_shape, depth=5*6+2,num_classes = num_classes)
 if optimizer=='Adam':
-    opt = Adam(lr=init_lr)
+    opt = Adam(lr=lr_schedule(0))
 elif optimizer=='SGD':
-    opt = SGD(lr=init_lr)
+    opt = SGD(lr=lr_schedule(0))
 elif optimizer =='RMSprop':
-    opt = RMSprop(lr=init_lr)
+    opt = RMSprop(lr=lr_schedule(0))
 elif optimizer == 'Adagrad':
-    opt = Adagrad(lr=init_lr)
+    opt = Adagrad(lr=lr_schedule(0))
 
 model.compile(loss='categorical_crossentropy',
               optimizer=opt,
@@ -169,7 +151,6 @@ print("-"*20+exp_name+'-'*20)
 
 # Prepare model model saving directory.
 lr_scheduler = LearningRateScheduler(lr_schedule)
-
 
 lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
                                cooldown=0,
@@ -182,33 +163,22 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 
 ### Train end
 last_acc = 0
-best_acc = 0
 convergence_epoch = 0
-TB_log_path = work_path/TB_Logs_Path/exp_name
 def on_epoch_end(epoch, logs):
     # from ipdb import set_trace as tr; tr()
     # print(logs)
     global last_acc
-    global best_acc
     if(logs['val_acc'] - last_acc > 0.01):
         global convergence_epoch
         convergence_epoch = epoch
-    if(logs['val_acc']>best_acc):
-        best_acc = logs['val_acc']
     last_acc = logs['val_acc']
     print('End of epoch')
     # renew_train_dataset()
-
 on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
 
-if lr_schedule_method == 'linear':
-    scheduler = lr_scheduler
-if lr_schedule_method == 'clr':
-    scheduler = clr
-
-callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
-# Run training, with or without data augmentation.
+TB_log_path = work_path/'TB_Log'/exp_name
+callbacks = [on_epoch_end_callback, lr_reducer, lr_scheduler, TensorBoard(log_dir= (TB_log_path.__str__()))]
 # Run training, with or without data augmentation.
 aug = True
 if aug == False:
@@ -283,9 +253,9 @@ print('Test accuracy:', scores[1])
 final_accuracy = scores[1]
 final_loss = scores[0]
 
-print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % ("exp_name", 'best_accuracy','final_accuracy', 'final_loss',
+print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % ("exp_name", 'final_accuracy', 'final_loss',
                                   'converage_epoch', 'distribution', 'par1', 'par2', 'dataset_name' ))
-max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t%s\t%d\t%s\t%s" % (exp_name, best_acc,final_accuracy, final_loss, convergence_epoch, distribution_method, dis_parameter1, dis_parameter2, dataset_name)
+max_acc_log_line = "%s\t%f\t%f\t%d\t%s\t%d\t%s\t%s" % (exp_name, final_accuracy, final_loss, convergence_epoch, distribution_method, dis_parameter1, dis_parameter2, dataset_name)
 print(max_acc_log_line)
 # print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % ("exp_name", 'final_accuracy', 'final_loss',
 #                                   'converage_epoch', 'lid_method', 'drop_percent', 'model_name','dataset_name' ),file=open(max_acc_log_path.__str__(), 'a'))

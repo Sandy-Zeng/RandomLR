@@ -21,7 +21,6 @@ if(len(sys.argv)>8):
     dis_parameter2 = float(sys.argv[7])
     linear_init_lr = float(sys.argv[8])
     work_path_name = (sys.argv[9]).strip('\r\n')
-    model_file = (sys.argv[10])
 else:
     print('Wrong Params')
     # exit()
@@ -48,7 +47,7 @@ max_acc_log_path = work_path/'res.txt'
 convergence_epoch = 0
 
 # Training parameters
-exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_ResNet32_%s' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,linear_init_lr,model_file)
+exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_ResNet32' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,linear_init_lr)
 if((work_path/'TB_Log'/exp_name).exists()):
     print('Already Finished!')
     exit()
@@ -94,7 +93,6 @@ decay = False
 def lr_schedule(epoch):
     global decay
     def U(tmp_lr):
-        factor = 1e2
         np.random.seed(int(time.time()))
         tmp_lr = np.random.random() * tmp_lr * 10
         # if linear_init_lr == 1e-1:
@@ -114,21 +112,12 @@ def lr_schedule(epoch):
 
     # Learning Rate Schedule
     lr = linear_init_lr
-    if epoch >= epochs * 0.9:
-        lr *= 0.5e-3
-    elif epoch >= epochs * 0.8:
-        lr *= 1e-3
-    elif epoch >= epochs * 0.6:
-        lr *= 1e-2
-    elif epoch >= epochs * 0.4:
-        lr *= 1e-1
-
-    # if distribution_method =='U':
-    #     lr = U(lr)
-    # elif distribution_method =='N':
-    #     lr = N(lr,dis_parameter1,dis_parameter2)
-    # elif distribution_method =='Base':
-    #     lr = lr
+    if distribution_method =='U':
+        lr = U(lr)
+    elif distribution_method =='N':
+        lr = N(lr,dis_parameter1,dis_parameter2)
+    elif distribution_method =='Base':
+        lr = lr
     print('Learning rate: ', lr)
     return lr
 
@@ -151,8 +140,8 @@ init_lr = lr_schedule(0)
 
 #ResNet:
 # model = keras.applications.resnet50.ResNet50(input_shape=None, include_top=True, weights=None)
-# model = resnet_v1(input_shape=input_shape, depth=5*6+2,num_classes = num_classes)
-model = load_model('./models_100/'+model_file)
+model = resnet_v1(input_shape=input_shape, depth=5*6+2,num_classes = num_classes)
+# model = load_model('./checkpoint/'+model_file)
 if optimizer=='Adam':
     opt = Adam(lr=init_lr)
 elif optimizer=='SGD':
@@ -192,8 +181,7 @@ def on_epoch_end(epoch, logs):
     # print(logs)
     global last_acc
     global best_acc
-    # if epoch>20:
-    #     model.save('./checkpoint/U_' + str(epoch) + '.h5')
+    model.save('./models_100/U_' + str(epoch) + '.h5')
     # if epoch > 50:
         # decay = True
         # model.save('./checkpoint/U_50_Test1' + str(epoch) + '.h5')

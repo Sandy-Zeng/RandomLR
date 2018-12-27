@@ -15,7 +15,7 @@ from sklearn.model_selection import train_test_split
 class Node(object):
     def __init__(self,init_model_weight,depth,parent,learning_rate):
         self.Q = 0.
-        self.N = 0
+        self.N = 1
         self.mimic_score = 0.
         self.model_weight = init_model_weight
         self.depth = depth
@@ -27,22 +27,23 @@ class Node(object):
     def print_node(self):
         print('Pick node')
         print('Depth:',self.depth)
-        print('Parent Depth:',self.parent.depth)
+        if self.parent != None:
+            print('Parent Depth:',self.parent.depth)
         print('LR:',self.learning_rate)
         print('Q:',self.Q)
         print('N:',self.N)
         print('UST:',self.ust_score)
 
-    def fully_expanded(self):
+    def is_fully_expanded(self):
         for child in self.children:
-            print('child N:',child.N)
-            if child.N == 0:
+            # print('child N:',child.N)
+            if child.N == 1:
                 return False
         return True
 
     def update_ust(self):
         for child in self.children:
-            child.ust_score = child.Q / (child.N+1e-4) + 0.2 * math.sqrt(math.log(self.N) / (child.N+1e-4))
+            child.ust_score = child.Q / (child.N) + 5 * math.sqrt(math.log(self.N) / (child.N))
 
     def update_status(self,result):
         self.Q = self.Q + result
@@ -62,7 +63,7 @@ class Node(object):
 
     def pick_unvisited(self):
         for child in self.children:
-            if child.N == 0:
+            if child.N == 1:
                 return child
         return None
 
@@ -73,19 +74,31 @@ class Node(object):
 
     def hightest_visit(self):
         best_lr = self.learning_rate
-        max_N = 0
-        best_child = None
+        max_N = 1
+        best_child = self
         for child in self.children:
             if child.N > max_N:
                 max_N = child.N
                 best_lr = child.learning_rate
                 best_child = child
+            if max_N==1 and child.model_weight!=None:
+                max_N = child.N
+                best_lr = child.learning_rate
+                best_child = child
         return best_lr,best_child
+
+    def gen_children(self):
+        epoch = self.depth
+        lr = decay_lr(epoch)
+        for i in range(random_num):
+            temp_lr = U(lr, random_range)
+            child = Node(init_model_weight=None, depth=epoch + 1, parent=self, learning_rate=temp_lr)
+            self.children.append(child)
 
 
 
 class MCTS(object):
-    def __init__(self,total_depth,power,random_num,eval_x,eval_y,mini_epoch):
+    def __init__(self,model_weight,init_depth,total_depth,power,random_range,random_num,eval_x,eval_y,mini_epoch):
         self.power = power
         self.random_num = random_num
         self.best_lrs = []
@@ -93,6 +106,28 @@ class MCTS(object):
         self.eval_y = eval_y
         self.total_depth = total_depth
         self.mini_epoch = mini_epoch
+        self.root = None
+        self.init_depth = init_depth
+        self.generate_hole_tree(init_depth=init_depth,model_weight=model_weight,tree_depth=total_depth,random_range=random_range,random_num=random_num)
+
+    def generate_hole_tree(self,init_depth,model_weight,tree_depth,random_range,random_num):
+        self.root = Node(init_model_weight=model_weight, depth=init_depth, parent=None, learning_rate=init_lr)
+        layer_cache = []
+        layer_cache.append(self.root)
+        for epoch in range(tree_depth):
+            lr = decay_lr(init_depth+1+epoch)
+            prod_cache = []
+            print('Depth:', init_depth+epoch+1)
+            print('Node Num:', len(layer_cache))
+            print('Base_lr:',lr)
+            for inter_node in layer_cache:
+                for i in range(random_num):
+                    # randomly generate the learning rate
+                    temp_lr = U(lr, random_range)
+                    child = Node(init_model_weight=None, depth=epoch+init_depth+1, parent=inter_node, learning_rate=temp_lr)
+                    inter_node.children.append(child)
+                    prod_cache.append(child)
+            layer_cache = prod_cache
 
     def resources_left(self):
         self.power = self.power - 1
@@ -101,27 +136,15 @@ class MCTS(object):
         else:
             return False
 
-    def traverse_root(self,root):
-        for i in range(random_num):
-            child = root.children[i]
-            local_model = new_model(root.model_weight, optimizer, input_shape, num_classes, lr=child.learning_rate)
-            local_model.fit_generator(
-                datagen.flow(self.eval_x, self.eval_y, batch_size=batch_size),
-                validation_data=(x_test, y_test),
-                epochs=self.mini_epoch, verbose=1, workers=4,
-            )
-            child.model_weight = local_model.get_weights()
-
-
-    def monte_carlo_tree_search(self,root):
+    def monte_carlo_tree_search(self):
         while self.resources_left():
-            leaf = self.traverse(root) # leaf = unvisited node
+            leaf = self.traverse(self.root) # leaf = unvisited node
             simulation_result = self.rollout(leaf)
             self.backpropagate(leaf,simulation_result)
-        return self.best_child(root)
+        return self.best_child(self.root)
 
     def traverse(self,node):
-        while node.fully_expanded():
+        while node.is_fully_expanded():
             node = node.best_ust()
         child = node.pick_unvisited()
         # in case no children are present /node is terminal
@@ -133,7 +156,7 @@ class MCTS(object):
     def non_terminal(self,node):
         if node == None:
             return False
-        if node.depth<self.total_depth:
+        if node.depth< self.init_depth + self.total_depth-1:
             return True
         else:
             return False
@@ -158,7 +181,7 @@ class MCTS(object):
 
         #generate children
         if node.depth <= self.total_depth and len(node.children)==0:
-            node = gen_children(node)
+            node = node.gen_children()
 
         #randomly pick a children
         list = range(self.random_num)
@@ -210,10 +233,45 @@ class MCTS(object):
         while self.non_terminal(node) == True:
             lr,node= node.hightest_visit()
             self.best_lrs.append(lr)
-        return
+            print('-------best child----------')
+            node.print_node()
+            print(lr)
+        return node.model_weight
+
+def iterate_gen_tree(total_depth,sub_tree_depth,model_weight):
+    sub_tree_num = int(total_depth/(sub_tree_depth-1))
+    best_lrs = []
+    depth = -1
+    temp_weight = model_weight
+    for i in range(sub_tree_num):
+        MCTS_Tree = MCTS(model_weight=temp_weight,init_depth=depth,total_depth=sub_tree_depth,
+                         power=power,random_range=random_range,
+                         random_num=random_num, eval_x=x_train_mini,
+                         eval_y=y_train_mini, mini_epoch=mini_epoch)
+        temp_weight = MCTS_Tree.monte_carlo_tree_search()
+        print(MCTS_Tree.best_lrs)
+        best_lrs.extend(MCTS_Tree.best_lrs)
+        depth += sub_tree_depth - 1
+
+    residul_depth = total_depth - (sub_tree_depth-1)*sub_tree_num + 1
+    if residul_depth>1:
+        MCTS_Tree = MCTS(model_weight=temp_weight, init_depth=depth, total_depth=residul_depth,
+                         power=power, random_range=random_range,
+                         random_num=random_num, eval_x=x_train_mini,
+                         eval_y=y_train_mini, mini_epoch=mini_epoch)
+        model_weight = MCTS_Tree.monte_carlo_tree_search()
+        print(MCTS_Tree.best_lrs)
+        best_lrs.extend(MCTS_Tree.best_lrs)
+        depth += residul_depth
+
+    print('Depth:',residul_depth)
+    print(best_lrs)
+
+    return best_lrs
 
 def new_model(global_model_weight,optimizer,input_shape,num_classes,lr):
     # model = resnet_v1(input_shape=input_shape, depth=5 * 6 + 2, num_classes=num_classes)
+    global model
     model.set_weights(global_model_weight)
     K.set_value(model.optimizer.lr, lr)
     return model
@@ -235,37 +293,6 @@ def decay_lr(epoch):
         lr *= 1e-1
     return lr
 
-
-def gen_children(node):
-    epoch = node.depth
-    lr = decay_lr(epoch)
-    for i in range(random_num):
-        temp_lr = U(lr, random_range)
-        child = Node(init_model_weight=None, depth=epoch+1, parent=node, learning_rate=temp_lr)
-        node.children.append(child)
-    return node
-
-
-
-
-def generate_hole_tree(model_weight,mini_epochs,init_lr,random_range,random_num):
-    root = Node(init_model_weight=model_weight,depth=-1,parent=None,learning_rate=init_lr)
-    layer_cache = []
-    layer_cache.append(root)
-    for epoch in range(mini_epochs):
-        lr = decay_lr(epoch)
-        prod_cache = []
-        print('Epoch:',epoch)
-        print('Node Num:',len(layer_cache))
-        for inter_node in layer_cache:
-            for i in range(random_num):
-                #randomly generate the learning rate
-                temp_lr = U(lr,random_range)
-                child = Node(init_model_weight=None,depth=epoch,parent=inter_node,learning_rate=temp_lr)
-                inter_node.children.append(child)
-                prod_cache.append(child)
-        layer_cache = prod_cache
-    return root
 
 
 def lr_schedule(epoch):
@@ -305,8 +332,9 @@ def evaluate(init_lr,exp_name):
                                    cooldown=0,
                                    patience=5,
                                    min_lr=0.5e-6)
-    TB_log_path = work_path/'TB_Logs'/exp_name
-    callbacks = [on_epoch_end,lr_scheduler, lr_reducer, TensorBoard(log_dir=(TB_log_path.__str__()))]
+    TB_log_path = work_path/work_path_name/'TB_Logs'/exp_name
+    on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
+    callbacks = [on_epoch_end_callback,lr_scheduler, lr_reducer, TensorBoard(log_dir=(TB_log_path.__str__()))]
     model.compile(loss='categorical_crossentropy',
                   optimizer=opt,
                   metrics=['accuracy', 'top_k_categorical_accuracy'])
@@ -314,7 +342,7 @@ def evaluate(init_lr,exp_name):
         datagen.flow(x_train, y_train, batch_size=batch_size),
         validation_data=(x_test, y_test),
         epochs=epochs, verbose=1, workers=4,
-        callbacks= callbacks
+        callbacks=callbacks
     )
     scores = model.evaluate(x_test, y_test, verbose=1, batch_size=batch_size * 4)
     print('Test loss:', scores[0])
@@ -323,7 +351,7 @@ def evaluate(init_lr,exp_name):
                                                   'converage_epoch'))
     max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t" % (
     exp_name, best_acc, scores[1], scores[0], convergence_epoch)
-    max_acc_log_path = work_path/'res.txt'
+    max_acc_log_path = work_path/work_path_name/'res.txt'
     print(max_acc_log_line, file=open(max_acc_log_path.__str__(), 'a'))
 
 def test_gen_hole_tree(root):
@@ -342,9 +370,6 @@ def test_gen_hole_tree(root):
 
 
 
-
-
-
 if __name__ == '__main__':
     dataset_name = (sys.argv[1])
     batch_size = int(sys.argv[2])
@@ -354,11 +379,18 @@ if __name__ == '__main__':
     init_lr = float(sys.argv[6])
     random_num = int(sys.argv[7])
     power = int(sys.argv[8])
-    work_path = (sys.argv[9])
+    work_path_name = str(sys.argv[9])
 
-    exp_name = '%s_%d_%d_%s_%d_%.2f_%d_%d_MCTS' % (
+    from pathlib import *
+    work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
+
+    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_MCTS' % (
          dataset_name, epochs, batch_size, optimizer, random_range,init_lr,random_num,power
     )
+
+    if ((work_path / work_path_name/'TB_Log' / exp_name).exists()):
+        print('Already Finished!')
+        exit()
 
     total_depth = int(epochs * 0.1)  #20
     mini_epoch = int(epochs / total_depth) #10
@@ -376,8 +408,8 @@ if __name__ == '__main__':
     input_shape = x_train.shape[1:]
 
     model = resnet_v1(input_shape=input_shape, depth=5 * 6 + 2, num_classes=num_classes)
-    print('------------Generate mini tree---------------------')
-    root = generate_hole_tree(model_weight=model.get_weights(),mini_epochs=3,init_lr=init_lr,random_range=random_range,random_num=random_num)
+
+    # root = generate_hole_tree(model_weight=model.get_weights(),mini_epochs=3,init_lr=init_lr,random_range=random_range,random_num=random_num)
     # test_gen_hole_tree(root)
     if optimizer == 'Adam':
         opt = Adam(lr=init_lr)
@@ -390,13 +422,15 @@ if __name__ == '__main__':
     model.compile(loss='categorical_crossentropy',
                   optimizer=opt,
                   metrics=['accuracy'])
+    print("-" * 20 + exp_name + '-' * 20)
+    print('------------Generate mini tree---------------------')
+    best_lrs = iterate_gen_tree(total_depth=total_depth, sub_tree_depth=3, model_weight=model.get_weights())
 
-
-    print('------------MCTS search--------------')
-    MCTS_Tree = MCTS(power=power,total_depth=total_depth,random_num=random_num,eval_x=x_train_mini,eval_y=y_train_mini,mini_epoch=mini_epoch)
-    MCTS_Tree.monte_carlo_tree_search(root=root)
-    best_lrs = MCTS_Tree.best_lrs
-    print(MCTS_Tree.best_lrs)
+    # print('------------MCTS search--------------')
+    # MCTS_Tree = MCTS(power=power,total_depth=total_depth,random_num=random_num,eval_x=x_train_mini,eval_y=y_train_mini,mini_epoch=mini_epoch)
+    # MCTS_Tree.monte_carlo_tree_search(root=root)
+    # best_lrs = MCTS_Tree.best_lrs
+    # print(MCTS_Tree.best_lrs)
 
     print('-----------Evaluate Learning Rates---------------')
     evaluate(init_lr=init_lr,exp_name=exp_name)

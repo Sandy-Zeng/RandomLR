@@ -35,6 +35,8 @@ class Node(object):
         print('UST:',self.ust_score)
 
     def is_fully_expanded(self):
+        if len(self.children) == 0:
+            return False
         for child in self.children:
             # print('child N:',child.N)
             if child.N == 1:
@@ -59,6 +61,8 @@ class Node(object):
         for child in self.children:
             if child.ust_score > best_ust:
                 best_child = child
+        print('-----pick best ust-----')
+        best_child.print_node()
         return best_child
 
     def pick_unvisited(self):
@@ -117,7 +121,7 @@ class MCTS(object):
         for epoch in range(tree_depth):
             lr = decay_lr(init_depth+1+epoch)
             prod_cache = []
-            print('Depth:', init_depth+epoch+1)
+            print('Depth:', init_depth+epoch)
             print('Node Num:', len(layer_cache))
             print('Base_lr:',lr)
             for inter_node in layer_cache:
@@ -131,7 +135,8 @@ class MCTS(object):
 
     def resources_left(self):
         self.power = self.power - 1
-        if self.power > 0:
+        print('Power Left:',self.power)
+        if self.power >= 0:
             return True
         else:
             return False
@@ -156,7 +161,7 @@ class MCTS(object):
     def non_terminal(self,node):
         if node == None:
             return False
-        if node.depth< self.init_depth + self.total_depth-1:
+        if node.depth< self.init_depth + self.total_depth:
             return True
         else:
             return False
@@ -205,7 +210,8 @@ class MCTS(object):
             return node.mimic_score
         else:
             model.set_weights(node.model_weight)
-            scores = model.evaluate(x_test, y_test, verbose=1, batch_size=batch_size * 4)
+            scores = model.evaluate(x_val,y_val, verbose=1, batch_size=batch_size * 4)
+            # scores = model.evaluate(x_test, y_test, verbose=1, batch_size=batch_size * 4)
             print('mimic acc:', scores[1])
             print('mimic loss:', scores[0])
             node.mimic_score = scores[1]
@@ -219,7 +225,6 @@ class MCTS(object):
             if node.model_weight == None:
                 node.model_weight = self.minic(parent_model_weight=node.parent.model_weight,lr=node.learning_rate)
             node = self.rollout_policy(node)
-            break
         return self.result(node)
 
     def backpropagate(self,node,simulate_result):
@@ -235,11 +240,10 @@ class MCTS(object):
             self.best_lrs.append(lr)
             print('-------best child----------')
             node.print_node()
-            print(lr)
         return node.model_weight
 
 def iterate_gen_tree(total_depth,sub_tree_depth,model_weight):
-    sub_tree_num = int(total_depth/(sub_tree_depth-1))
+    sub_tree_num = int(total_depth/(sub_tree_depth))
     best_lrs = []
     depth = -1
     temp_weight = model_weight
@@ -251,10 +255,10 @@ def iterate_gen_tree(total_depth,sub_tree_depth,model_weight):
         temp_weight = MCTS_Tree.monte_carlo_tree_search()
         print(MCTS_Tree.best_lrs)
         best_lrs.extend(MCTS_Tree.best_lrs)
-        depth += sub_tree_depth - 1
+        depth += sub_tree_depth
 
-    residul_depth = total_depth - (sub_tree_depth-1)*sub_tree_num + 1
-    if residul_depth>1:
+    residul_depth = total_depth - (sub_tree_depth)*sub_tree_num
+    if residul_depth>0:
         MCTS_Tree = MCTS(model_weight=temp_weight, init_depth=depth, total_depth=residul_depth,
                          power=power, random_range=random_range,
                          random_num=random_num, eval_x=x_train_mini,
@@ -338,6 +342,7 @@ def evaluate(init_lr,exp_name):
     model.compile(loss='categorical_crossentropy',
                   optimizer=opt,
                   metrics=['accuracy', 'top_k_categorical_accuracy'])
+    t1 = time.time()
     model.fit_generator(
         datagen.flow(x_train, y_train, batch_size=batch_size),
         validation_data=(x_test, y_test),
@@ -347,11 +352,15 @@ def evaluate(init_lr,exp_name):
     scores = model.evaluate(x_test, y_test, verbose=1, batch_size=batch_size * 4)
     print('Test loss:', scores[0])
     print('Test accuracy:', scores[1])
-    print("%s\t%s\t%s\t%s\t%s\t" % ("exp_name", 'best_accuracy', 'final_accuracy', 'final_loss',
-                                                  'converage_epoch'))
-    max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t" % (
-    exp_name, best_acc, scores[1], scores[0], convergence_epoch)
+    t2 = time.time()
+    evaluate_time = t2-t1
+    percentage = MCTS_TIME/evaluate_time
+    print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t" % ("exp_name", 'best_accuracy', 'final_accuracy', 'final_loss',
+                                                  'converage_epoch','MCTS time','evaluate time','percentage'))
+    max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t%.2f\t%.2f\t%.4f" % (
+    exp_name, best_acc, scores[1], scores[0], convergence_epoch,MCTS_TIME,evaluate_time,percentage)
     max_acc_log_path = work_path/work_path_name/'res.txt'
+    print(max_acc_log_line)
     print(max_acc_log_line, file=open(max_acc_log_path.__str__(), 'a'))
 
 def test_gen_hole_tree(root):
@@ -378,22 +387,23 @@ if __name__ == '__main__':
     random_range = int(sys.argv[5])
     init_lr = float(sys.argv[6])
     random_num = int(sys.argv[7])
-    power = int(sys.argv[8])
-    work_path_name = str(sys.argv[9])
+    sub_tree_depth = int(sys.argv[8])
+    power = int(sys.argv[9])
+    mini_epoch = int(sys.argv[10])
+    work_path_name = str(sys.argv[11])
 
     from pathlib import *
     work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
 
-    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_MCTS' % (
-         dataset_name, epochs, batch_size, optimizer, random_range,init_lr,random_num,power
-    )
+    total_depth = int(epochs/mini_epoch)  #20
+    # mini_epoch = int(epochs / total_depth) #10
 
-    if ((work_path / work_path_name/'TB_Log' / exp_name).exists()):
+    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_%d_%d_MCTS_val' % (
+        dataset_name, epochs, batch_size, optimizer, random_range, init_lr, random_num, power,mini_epoch,sub_tree_depth
+    )
+    if ((work_path / work_path_name / 'TB_Logs' / exp_name).exists()):
         print('Already Finished!')
         exit()
-
-    total_depth = int(epochs * 0.1)  #20
-    mini_epoch = int(epochs / total_depth) #10
 
     data_loader = DataLoader(dataset_name=dataset_name)
     x_train, y_train, x_test, y_test, datagen,num_classes = data_loader.load_data()
@@ -402,7 +412,8 @@ if __name__ == '__main__':
     train_sample_num = x_train.shape[0]
     mini_train_sample_num = train_sample_num * 0.1
     print('Mini Train Num:',mini_train_sample_num)
-    _,x_train_mini,_,y_train_mini = train_test_split(x_train,y_train,test_size=0.1)
+    _,x_train_MCTS,_,y_train_MCTS = train_test_split(x_train,y_train,test_size=0.2)
+    x_train_mini, x_val, y_train_mini, y_val = train_test_split(x_train_MCTS,y_train_MCTS,test_size=0.5)
     datagen.fit(x_train_mini)
     assert x_train_mini.shape[0]==mini_train_sample_num
     input_shape = x_train.shape[1:]
@@ -423,8 +434,12 @@ if __name__ == '__main__':
                   optimizer=opt,
                   metrics=['accuracy'])
     print("-" * 20 + exp_name + '-' * 20)
-    print('------------Generate mini tree---------------------')
-    best_lrs = iterate_gen_tree(total_depth=total_depth, sub_tree_depth=3, model_weight=model.get_weights())
+    # print('------------Generate mini tree---------------------')
+    start = time.time()
+    best_lrs = iterate_gen_tree(total_depth=total_depth, sub_tree_depth=sub_tree_depth, model_weight=model.get_weights())
+    end = time.time()
+    MCTS_TIME = end - start
+    print('MCTS cost:',end-start)
 
     # print('------------MCTS search--------------')
     # MCTS_Tree = MCTS(power=power,total_depth=total_depth,random_num=random_num,eval_x=x_train_mini,eval_y=y_train_mini,mini_epoch=mini_epoch)

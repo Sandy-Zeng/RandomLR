@@ -1,13 +1,12 @@
-import sys
-from pathlib import *
-from keras.callbacks import LambdaCallback
-import LR_resNet
-from LR_resNet import *
-from CLR_callback import CyclicLR
+from models.LR_resNet import *
 import time
-from keras.optimizers import Adam,SGD,RMSprop,Adagrad
-import random
-import tensorflow as tf
+
+import math
+from keras.optimizers import SGD, RMSprop, Adagrad
+
+from CLR_callback import CyclicLR
+from models.LR_resNet import *
+from models import densenet
 
 if(len(sys.argv)>11):
     print('Right Parameter')
@@ -17,11 +16,12 @@ if(len(sys.argv)>11):
     optimizer = (sys.argv[4])
     lr_schedule_method = (sys.argv[5])
     distribution_method = (sys.argv[6])
-    dis_parameter1 = float(sys.argv[7])
-    dis_parameter2 = float(sys.argv[8])
-    linear_init_lr = float(sys.argv[9])
-    TB_Logs_Path = (sys.argv[10])
-    work_path_name = (sys.argv[11]).strip('\r\n')
+    random_range = float(sys.argv[7])
+    linear_init_lr = float(sys.argv[8])
+    TB_Logs_Path = (sys.argv[9])
+    work_path_name = (sys.argv[10]).strip('\r\n')
+    resnet_depth = int(sys.argv[11])
+    model = (sys.argv[12])
 else:
     print('Wrong Params')
     # exit()
@@ -32,11 +32,12 @@ else:
     optimizer = 'Adam'
     lr_schedule_method = 'clr'
     distribution_method = 'RL'
-    dis_parameter1 = 0.2
-    dis_parameter2 = 0.8
+    random_range = 4
     work_path_name = 'Default'
     linear_init_lr = 1e-3
     TB_Logs_Path = 'TB_Log'
+    resnet_depth = 32
+    model = 'resnet'
 
 
 work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
@@ -47,7 +48,11 @@ max_acc_log_path = work_path/'res.txt'
 convergence_epoch = 0
 
 # Training parameters
-exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_ResNet32_Log' % (dataset_name,epochs,batch_size,optimizer,distribution_method,dis_parameter1,dis_parameter2,linear_init_lr)
+if model == 'resnet':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_ResNet_%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,linear_init_lr,resnet_depth)
+if model == 'densenet':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_DenseNet' % (
+    dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range, linear_init_lr)
 if((work_path/'TB_Log'/exp_name).exists()):
     print('Already Finished!')
     exit()
@@ -56,13 +61,11 @@ if((work_path/'TB_Log'/exp_name).exists()):
 
 import keras
 from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from keras.callbacks import LearningRateScheduler
 from keras.callbacks import ReduceLROnPlateau, LambdaCallback
 from keras.callbacks import TensorBoard
-from keras.datasets import cifar10,mnist,cifar100
+from keras.datasets import cifar10, cifar100
 import numpy as np
-import sys
-from pathlib import *
 
 # Load the dataset.
 if dataset_name=='CIFAR10':
@@ -92,12 +95,7 @@ def lr_schedule(epoch):
     def U(tmp_lr):
         factor = 1e2
         np.random.seed(int(time.time()))
-        if linear_init_lr == 1e-1:
-            tmp_lr = np.random.random() * tmp_lr
-        if linear_init_lr == 1e-2:
-            tmp_lr = np.random.random() * tmp_lr
-        if linear_init_lr < 1e-2:
-            tmp_lr = np.log(np.random.random() * tmp_lr * 10)
+        tmp_lr = np.random.random() * tmp_lr * random_range
         # tmp_lr = np.random.random() * tmp_lr
         return tmp_lr
     def N(tmp_lr,mu=0,sigma=1):
@@ -120,20 +118,54 @@ def lr_schedule(epoch):
 
     if distribution_method =='U':
         lr = U(lr)
-    elif distribution_method =='N':
-        lr = N(lr,dis_parameter1,dis_parameter2)
     elif distribution_method =='Base':
         lr = lr
     print('Learning rate: ', lr)
     return lr
 
+Te = 20
+tt = 0
+t0 = math.pi/2.0
+TeNext = Te
+multFactor = 2
+cyc = True
+def warm_start_lr_schedule(epoch):
+    def WRSGN(epoch, tmp_lr):
+        global Te, tt, t0, TeNext, multFactor, cyc, epoches
+        dt = 2.0 * math.pi / float(2.0 * Te)
+        tt = tt + float(dt)
+        if tt >= math.pi:
+            tt = tt - math.pi
+        curT = t0 + tt
+        new_lr = tmp_lr * (1.0 + math.sin(curT)) / 2.0  # lr_min = 0, lr_max = lr
+        if (epoch + 1 == TeNext):  # time to restart
+            tt = 0  # by setting to 0 we set lr to lr_max, see above
+            Te = Te * multFactor  # change the period of restarts
+            TeNext = TeNext + Te  # note the next restart's epoch
+            if TeNext > epochs:
+                cyc = False
+                return linear_init_lr *1e-3
+        return new_lr
+
+    global cyc
+    if cyc == True:
+        lr = linear_init_lr
+        lr = WRSGN(epoch,lr)
+    else:
+        lr = linear_init_lr * 1e-3
+    print('Learning rate: ', lr)
+    return lr
+
+
 init_lr = 0.
 base_lr = 0.001
 max_lr = 0.
 if optimizer=='Adam':
+    base_lr = 0.001
     max_lr = 0.006
 elif optimizer=='SGD':
-    max_lr = 0.1
+    base_lr = 0.1
+    max_lr = 0.3
 elif optimizer =='RMSprop':
     max_lr = 0.006
 elif optimizer == 'Adagrad':
@@ -141,9 +173,9 @@ elif optimizer == 'Adagrad':
 
 if lr_schedule_method == 'clr':
     clr = CyclicLR(base_lr=base_lr, max_lr=max_lr,
-                   step_size=2000., mode='triangular2',
+                   step_size=5000., mode='triangular2',
                    distribution_method=distribution_method)
-    init_lr = 0.001
+    init_lr = base_lr
 else:
     init_lr = lr_schedule(0)
 
@@ -151,7 +183,11 @@ else:
 
 #ResNet:
 # model = keras.applications.resnet50.ResNet50(input_shape=None, include_top=True, weights=None)
-model = resnet_v1(input_shape=input_shape, depth=5*6+2,num_classes = num_classes)
+if model == 'resnet':
+    model = resnet_v1(input_shape=input_shape, depth=resnet_depth,num_classes = num_classes)
+if model == 'densenet':
+    model = densenet.DenseNet(classes=num_classes, input_shape=input_shape, depth=40, growth_rate=12,
+                              bottleneck=True, reduction=0.5)
 if optimizer=='Adam':
     opt = Adam(lr=init_lr)
 elif optimizer=='SGD':
@@ -168,7 +204,6 @@ model.compile(loss='categorical_crossentropy',
 print("-"*20+exp_name+'-'*20)
 
 # Prepare model model saving directory.
-lr_scheduler = LearningRateScheduler(lr_schedule)
 
 
 lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
@@ -199,14 +234,16 @@ def on_epoch_end(epoch, logs):
     print('End of epoch')
     # renew_train_dataset()
 
+
 on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
 
 if lr_schedule_method == 'linear':
-    scheduler = lr_scheduler
+    scheduler = LearningRateScheduler(lr_schedule)
 if lr_schedule_method == 'clr':
     scheduler = clr
-
+if lr_schedule_method == 'warm_start':
+    scheduler = LearningRateScheduler(warm_start_lr_schedule)
 callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
 # Run training, with or without data augmentation.
 # Run training, with or without data augmentation.
@@ -261,7 +298,8 @@ else:
         # image data format, either "channels_first" or "channels_last"
         data_format=None,
         # fraction of images reserved for validation (strictly between 0 and 1)
-        validation_split=0.0)
+        validation_split=0.0
+    )
 
     # Compute quantities required for featurewise normalization
     # (std, mean, and principal components if ZCA whitening is applied).
@@ -285,7 +323,7 @@ final_loss = scores[0]
 
 print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % ("exp_name", 'best_accuracy','final_accuracy', 'final_loss',
                                   'converage_epoch', 'distribution', 'par1', 'par2', 'dataset_name' ))
-max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t%s\t%d\t%s\t%s" % (exp_name, best_acc,final_accuracy, final_loss, convergence_epoch, distribution_method, dis_parameter1, dis_parameter2, dataset_name)
+max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t%s\t%d\t%s" % (exp_name, best_acc,final_accuracy, final_loss, convergence_epoch, distribution_method, random_range, dataset_name)
 print(max_acc_log_line)
 # print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % ("exp_name", 'final_accuracy', 'final_loss',
 #                                   'converage_epoch', 'lid_method', 'drop_percent', 'model_name','dataset_name' ),file=open(max_acc_log_path.__str__(), 'a'))

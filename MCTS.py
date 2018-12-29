@@ -1,16 +1,18 @@
-import math
-import time
-import numpy as np
-from random import choice
-from LR_resNet import resnet_v1
-from keras.datasets import cifar10,mnist,cifar100
-from DataLoader import DataLoader
 import sys
-from keras.optimizers import *
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+import time
+from random import choice
+
+import math
+import numpy as np
+from keras.callbacks import LearningRateScheduler
 from keras.callbacks import ReduceLROnPlateau, LambdaCallback
 from keras.callbacks import TensorBoard
+from keras.optimizers import *
 from sklearn.model_selection import train_test_split
+
+from DataLoader import DataLoader
+from models.LR_resNet import resnet_v1
+
 
 class Node(object):
     def __init__(self,init_model_weight,depth,parent,learning_rate):
@@ -45,7 +47,7 @@ class Node(object):
 
     def update_ust(self):
         for child in self.children:
-            child.ust_score = child.Q / (child.N) + 5 * math.sqrt(math.log(self.N) / (child.N))
+            child.ust_score = child.Q / (child.N) + 0.2 * math.sqrt(math.log(self.N) / (child.N))
 
     def update_status(self,result):
         self.Q = self.Q + result
@@ -61,6 +63,7 @@ class Node(object):
         for child in self.children:
             if child.ust_score > best_ust:
                 best_child = child
+                best_ust = child.ust_score
         print('-----pick best ust-----')
         best_child.print_node()
         return best_child
@@ -120,6 +123,7 @@ class MCTS(object):
         layer_cache.append(self.root)
         for epoch in range(tree_depth):
             lr = decay_lr(init_depth+1+epoch)
+            # lr = init_lr
             prod_cache = []
             print('Depth:', init_depth+epoch)
             print('Node Num:', len(layer_cache))
@@ -128,6 +132,7 @@ class MCTS(object):
                 for i in range(random_num):
                     # randomly generate the learning rate
                     temp_lr = U(lr, random_range)
+                    # print(temp_lr)
                     child = Node(init_model_weight=None, depth=epoch+init_depth+1, parent=inter_node, learning_rate=temp_lr)
                     inter_node.children.append(child)
                     prod_cache.append(child)
@@ -282,6 +287,10 @@ def new_model(global_model_weight,optimizer,input_shape,num_classes,lr):
 
 def U(tmp_lr,random_range):
     # np.random.seed(int(time.time()))
+    # factor = 0.17
+    # rand = (random_range * np.random.random()+1)
+    # print(rand)
+    # tmp_lr = tmp_lr ** (factor * rand)
     tmp_lr = np.random.random() * tmp_lr * random_range + tmp_lr/random_range
     return tmp_lr
 
@@ -398,7 +407,7 @@ if __name__ == '__main__':
     total_depth = int(epochs/mini_epoch)  #20
     # mini_epoch = int(epochs / total_depth) #10
 
-    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_%d_%d_MCTS_val' % (
+    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_%d_%d_MCTS_update' % (
         dataset_name, epochs, batch_size, optimizer, random_range, init_lr, random_num, power,mini_epoch,sub_tree_depth
     )
     if ((work_path / work_path_name / 'TB_Logs' / exp_name).exists()):
@@ -447,6 +456,7 @@ if __name__ == '__main__':
     # best_lrs = MCTS_Tree.best_lrs
     # print(MCTS_Tree.best_lrs)
 
+    # best_lrs = [0.00077299085,0.0014,0.002240,0.002559,0.001476,0.0015318,0.0041795,0.0032571,0.000361128,0.00370699,0.001599,4.22e-5,2.764e-5,1.44036e-5,4.10257e-5,2.8634756e-6,1.621935e-6,4.20071916e-6,2.7859968e-7,1.51925e-6]
     print('-----------Evaluate Learning Rates---------------')
     evaluate(init_lr=init_lr,exp_name=exp_name)
 

@@ -1,14 +1,12 @@
-import sys
-from pathlib import *
-from keras.callbacks import LambdaCallback
-import LR_resNet
-from LR_resNet import *
-from CLR_callback import CyclicLR
+from models.LR_resNet import *
 import time
-from keras.optimizers import Adam,SGD,RMSprop,Adagrad
-import random
-import tensorflow as tf
-import queue
+import time
+import models.densenet_cifar10 as densenet
+from models.vgg import model as vgg
+
+from keras.optimizers import SGD, RMSprop, Adagrad
+
+from models.LR_resNet import *
 
 if(len(sys.argv)>8):
     print('Right Parameter')
@@ -17,10 +15,13 @@ if(len(sys.argv)>8):
     epochs = int(sys.argv[3])
     optimizer = (sys.argv[4])
     distribution_method = (sys.argv[5])
-    random_range = float(sys.argv[6])
-    peak_delay = float(sys.argv[7])
-    linear_init_lr = float(sys.argv[8])
-    work_path_name = (sys.argv[9]).strip('\r\n')
+    lr_schedule_method = (sys.argv[6])
+    random_range = float(sys.argv[7])
+    peak_delay = float(sys.argv[8])
+    linear_init_lr = float(sys.argv[9])
+    work_path_name = (sys.argv[10]).strip('\r\n')
+    depth = int(sys.argv[11])
+    model_name = sys.argv[12]
 else:
     print('Wrong Params')
     # exit()
@@ -35,6 +36,7 @@ else:
     dis_parameter2 = 0.8
     work_path_name = 'Default'
     linear_init_lr = 1e-3
+    model_name = 'resnet'
 
 
 work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
@@ -45,7 +47,17 @@ max_acc_log_path = work_path/'res.txt'
 convergence_epoch = 0
 
 # Training parameters
-exp_name = '%s_%d_%d_%s_%s_%.2f_%.2f_%.4f_ResNet32_Calm' % (dataset_name,epochs,batch_size,optimizer,distribution_method,random_range,peak_delay,linear_init_lr)
+# exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.2f_%.4f_ResNet%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,peak_delay,linear_init_lr,depth)
+if model_name == 'resnet':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_ResNet_%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,linear_init_lr,depth)
+if model_name == 'densenet':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_DenseNet' % (
+    dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range, linear_init_lr)
+if model_name == 'vgg':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_VGG' % (
+        dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range,
+        linear_init_lr)
+
 if((work_path/'TB_Log'/exp_name).exists()):
     print('Already Finished!')
     exit()
@@ -54,13 +66,11 @@ if((work_path/'TB_Log'/exp_name).exists()):
 
 import keras
 from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from keras.callbacks import LearningRateScheduler
 from keras.callbacks import ReduceLROnPlateau, LambdaCallback
 from keras.callbacks import TensorBoard
-from keras.datasets import cifar10,mnist,cifar100
+from keras.datasets import cifar10, cifar100
 import numpy as np
-import sys
-from pathlib import *
 
 # Load the dataset.
 if dataset_name=='CIFAR10':
@@ -69,7 +79,7 @@ if dataset_name=='CIFAR10':
     num_classes = len(set(y_train.flatten()))
 if dataset_name=='CIFAR100':
     print(dataset_name)
-    (x_train, y_train), (x_test, y_test) = cifar100.load_data()
+    (x_train, y_train), (x_test, y_test) = cifar100.load_data(label_mode='fine')
     num_classes = len(set(y_train.flatten()))
 
 print("class num ",num_classes)
@@ -94,11 +104,12 @@ peak_epoch = 0
 peak_delay_temp = peak_delay
 decay_period = 0
 calm_count = 0
+calm_down_lr = 0
 
 
-def peak_detect(acc,cur_model):
+def peak_detect(acc,cur_model,epoch):
     global peak_value,peak_delay_temp,model,decay_period,pointer,peak_epoch,peak_delay
-    global calm_count
+    global calm_count,calm_down_lr
     acc_cache.append(acc)
     models_cache.append(cur_model)
     pointer = pointer + 1
@@ -110,17 +121,19 @@ def peak_detect(acc,cur_model):
                 print('acc peak', pointer + 1)
                 print('peak value',peak_value)
                 print('peak delay',peak_delay_temp)
-                if temp_peak>peak_value:
+                if temp_peak>peak_value+0.003:
                     peak_value = temp_peak
                     peak_epoch = pointer + 1
                     peak_delay_temp = peak_delay
-                elif temp_peak<=peak_value and peak_delay_temp>0:
+                    calm_down_lr = K.get_value(model.optimizer.lr)
+                elif peak_delay_temp>0:
                     peak_delay_temp = peak_delay_temp- 1
-                elif temp_peak<=peak_value and peak_delay_temp == 0:
+                elif peak_delay_temp == 0:
                     model = models_cache[peak_epoch]
                     peak_delay_temp = peak_delay
                     peak_value = 0
-                    calm_count = 20
+                    decay_period = min(4,decay_period)
+                    calm_count = lr_epoch[decay_period] - epoch
 
 
 def calm_down(acc,cur_model):
@@ -133,31 +146,33 @@ def calm_down(acc,cur_model):
         decay_period = min(decay_period + 1, 4)
 
 
+def range_decay(epoch):
+    return (epochs - epoch)/float(epochs) * random_range
+
+
 
 lr_decay = [linear_init_lr,linear_init_lr*1e-1,linear_init_lr*1e-2,linear_init_lr*1e-3,linear_init_lr*0.5e-3]
+lr_epoch = [epochs*0.4,epochs*0.6,epochs*0.8,epochs*0.9,epochs]
+
+
+def U(tmp_lr):
+    np.random.seed(int(time.time()))
+    # range = range_decay(epoch)
+    tmp_lr = np.random.random() * tmp_lr * random_range + tmp_lr / random_range
+    return tmp_lr
 
 def lr_schedule(epoch):
-    def U(tmp_lr):
-        np.random.seed(int(time.time()))
-        tmp_lr = np.random.random() * tmp_lr * random_range + tmp_lr/random_range
-        return tmp_lr
-    def N(tmp_lr,mu=0,sigma=1):
-        np.random.seed(int(time.time()))
-        tmp_lr_factor = np.random.normal(mu,sigma)
-        tmp_lr_factor = abs(tmp_lr_factor)
-        tmp_lr *= tmp_lr_factor
-        return tmp_lr
 
     #Learning Rate Schedule
     global decay_period,calm_count
     lr = linear_init_lr
-    if epoch >= epochs * 0.9:
+    if epoch > epochs * 0.9:
         lr *= 0.5e-3
-    elif epoch >= epochs * 0.8:
+    elif epoch > epochs * 0.8:
         lr *= 1e-3
-    elif epoch >= epochs * 0.6:
+    elif epoch > epochs * 0.6:
         lr *= 1e-2
-    elif epoch >= epochs * 0.4:
+    elif epoch > epochs * 0.4:
         lr *= 1e-1
     early_lr = lr_decay[decay_period]
     # lr = early_lr
@@ -172,11 +187,45 @@ def lr_schedule(epoch):
     print('Learning rate: ', lr)
     return lr
 
+def densenet_lr_schedule(epoch):
+
+    #Learning Rate Schedule
+    lr = linear_init_lr
+    if epoch >= epochs * 0.75:
+        lr *= 1e-2
+    elif epoch >= epochs * 0.5:
+        lr *= 1e-1
+
+    if calm_count == 0:
+        if distribution_method =='U':
+            lr = U(lr)
+        elif distribution_method =='Base':
+            lr = lr
+    print('Learning rate: ', lr)
+    return lr
+
 
 init_lr = lr_schedule(0)
 #ResNet:
+if model_name == 'resnet':
+    if dataset_name == 'CIFAR10':
+        model = resnet_v2(input_shape=input_shape, depth=depth, num_classes=num_classes)
+    else:
+        model = resnet_v2(input_shape=input_shape, depth=depth, num_classes=num_classes)
+if model_name == 'densenet':
+    print(model_name)
+    model = densenet.DenseNet(nb_classes=num_classes,
+                              img_dim=input_shape,
+                              depth=40,
+                              nb_dense_block=3,
+                              growth_rate=12,
+                              nb_filter=16,
+                              dropout_rate=0,
+                              weight_decay=1e-4)
+if model_name == 'vgg':
+    model = vgg(input_shape=input_shape,num_classes=num_classes)
 # model = keras.applications.resnet50.ResNet50(input_shape=None, include_top=True, weights=None)
-model = resnet_v1(input_shape=input_shape, depth=5*6+2,num_classes = num_classes)
+# model = resnet_v1(input_shape=input_shape, depth=depth,num_classes = num_classes)
 if optimizer=='Adam':
     opt = Adam(lr=init_lr)
 elif optimizer=='SGD':
@@ -185,11 +234,6 @@ elif optimizer =='RMSprop':
     opt = RMSprop(lr=init_lr)
 elif optimizer == 'Adagrad':
     opt = Adagrad(lr=init_lr)
-
-def mycrossentropy(y_true, y_pred, t = 10):
-    y_pred = y_pred / t
-    loss = K.categorical_crossentropy(y_true, y_pred)
-    return loss
 
 model.compile(loss='categorical_crossentropy',
               optimizer=opt,
@@ -203,7 +247,11 @@ model.compile(loss='categorical_crossentropy',
 print("-"*20+exp_name+'-'*20)
 
 # Prepare model model saving directory.
-lr_scheduler = LearningRateScheduler(lr_schedule)
+if model_name == 'densenet':
+    scheduler = LearningRateScheduler(densenet_lr_schedule)
+else:
+    scheduler = LearningRateScheduler(lr_schedule)
+# lr_scheduler = LearningRateScheduler(lr_schedule)
 
 
 lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
@@ -219,13 +267,18 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 last_acc = 0
 best_acc = 0
 convergence_epoch = 0
+if 'noAug' in work_path_name:
+    aug = False
+    exp_name = exp_name + 'noAug'
+else:
+    aug = True
 TB_log_path = work_path/'TB_Logs'/exp_name
 
 
 def on_epoch_end(epoch, logs):
     global last_acc,best_acc,model,calm_count
     if calm_count == 0:
-        peak_detect(logs['acc'],model)
+        peak_detect(logs['acc'],model,epoch)
     else:
         calm_down(logs['acc'],model)
     if(logs['val_acc'] - last_acc > 0.01):
@@ -236,15 +289,32 @@ def on_epoch_end(epoch, logs):
     last_acc = logs['val_acc']
     print('End of epoch')
 
+def random_crop_image(image,pad=4):
+    height, width = image.shape[:2]
+    zero_border_side = np.zeros((height,pad,3))
+    zero_border_top = np.zeros((pad,width+2*pad,3))
+    image_pad = np.concatenate((zero_border_side,image),axis=1)
+    image_pad = np.concatenate((image_pad,zero_border_side),axis=1)
+    image_pad = np.concatenate((zero_border_top,image_pad),axis=0)
+    image_pad = np.concatenate((image_pad,zero_border_top),axis=0)
+    # print(image_pad.shape)
+    # print(image_pad[:,:,0])
+    pad_hight,pad_width = image_pad.shape[:2]
+    dy = np.random.randint(0,pad_hight-height)
+    dx = np.random.randint(0,pad_width-width)
+    image_crop = image_pad[dy:dy+height,dx:dx+width,:]
+    # print(image_crop.shape)
+    # assert False
+    return image_crop
+
 on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
 
-scheduler = lr_scheduler
+# scheduler = lr_scheduler
 
 callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
 # Run training, with or without data augmentation.
 # Run training, with or without data augmentation.
-aug = True
 if aug == False:
     model.fit(x_train, y_train,
               batch_size=batch_size,

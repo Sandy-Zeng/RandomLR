@@ -61,7 +61,7 @@ class CyclicLR(Callback):
     """
 
     def __init__(self, base_lr=0.001, max_lr=0.006, step_size=2000., mode='triangular',
-                 gamma=1., scale_fn=None, scale_mode='cycle',distribution_method='U'):
+                 gamma=1., scale_fn=None, scale_mode='cycle',distribution_method='U',calm_down=20,random_range=1):
         super(CyclicLR, self).__init__()
 
         self.base_lr = base_lr
@@ -70,6 +70,9 @@ class CyclicLR(Callback):
         self.mode = mode
         self.gamma = gamma
         self.distribution_method = distribution_method
+        self.calm_down = calm_down
+        self.count = calm_down
+        self.random_range = random_range
         if scale_fn == None:
             if self.mode == 'triangular':
                 self.scale_fn = lambda x: 1.
@@ -112,10 +115,9 @@ class CyclicLR(Callback):
                 self.clr_iterations)
 
     def U(self,tmp_lr):
-        factor = 1e2
         np.random.seed(int(time.time()))
         # tmp_lr = np.random.random() * factor / np.sqrt(factor) * tmp_lr
-        tmp_lr = np.random.random() * tmp_lr
+        tmp_lr = np.random.random() * tmp_lr * self.random_range
         return tmp_lr
 
     def N(self,tmp_lr, mu=0.2, sigma=0.8):
@@ -135,8 +137,12 @@ class CyclicLR(Callback):
 
     def on_batch_end(self, epoch, logs=None):
         logs = logs or {}
-        self.trn_iterations += 1
-        self.clr_iterations += 1
+        if self.count == 0:
+            self.trn_iterations += 1
+            self.clr_iterations += 1
+            self.count = self.calm_down
+        else:
+            self.count -= 1
 
         self.history.setdefault('lr', []).append(K.get_value(self.model.optimizer.lr))
         self.history.setdefault('iterations', []).append(self.trn_iterations)

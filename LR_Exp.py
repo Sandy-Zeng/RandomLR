@@ -6,7 +6,11 @@ from keras.optimizers import SGD, RMSprop, Adagrad
 
 from CLR_callback import CyclicLR
 from models.LR_resNet import *
-from models import densenet
+from models.densenet121 import DenseNet
+import models.densenet_cifar10 as densenet
+from models.vgg import model as vgg
+from models.keras_vgg import VGG16 as vgg16
+
 
 if(len(sys.argv)>11):
     print('Right Parameter')
@@ -21,7 +25,9 @@ if(len(sys.argv)>11):
     TB_Logs_Path = (sys.argv[9])
     work_path_name = (sys.argv[10]).strip('\r\n')
     resnet_depth = int(sys.argv[11])
-    model = (sys.argv[12])
+    model_name = (sys.argv[12])
+    triangle_method = sys.argv[13]
+    multFac = int(sys.argv[14])
 else:
     print('Wrong Params')
     # exit()
@@ -38,6 +44,8 @@ else:
     TB_Logs_Path = 'TB_Log'
     resnet_depth = 32
     model = 'resnet'
+    triangle_method = 'triangle'
+    multFac = 1
 
 
 work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
@@ -48,11 +56,15 @@ max_acc_log_path = work_path/'res.txt'
 convergence_epoch = 0
 
 # Training parameters
-if model == 'resnet':
+if model_name == 'resnet':
     exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_ResNet_%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,linear_init_lr,resnet_depth)
-if model == 'densenet':
+if model_name == 'densenet':
     exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_DenseNet' % (
     dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range, linear_init_lr)
+if model_name == 'vgg':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_VGG' % (
+        dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range,
+        linear_init_lr)
 if((work_path/'TB_Log'/exp_name).exists()):
     print('Already Finished!')
     exit()
@@ -74,7 +86,7 @@ if dataset_name=='CIFAR10':
     num_classes = len(set(y_train.flatten()))
 if dataset_name=='CIFAR100':
     print(dataset_name)
-    (x_train, y_train), (x_test, y_test) = cifar100.load_data()
+    (x_train, y_train), (x_test, y_test) = cifar100.load_data(label_mode='fine')
     num_classes = len(set(y_train.flatten()))
 
 print("class num ",num_classes)
@@ -91,29 +103,50 @@ print(x_train.shape[0], 'train samples')
 print(x_test.shape[0], 'test samples')
 print('y_train shape:', y_train.shape)
 
+
+def U(tmp_lr):
+    np.random.seed(int(time.time()))
+    tmp_lr = np.random.random() * tmp_lr * random_range
+    return tmp_lr
+
 def lr_schedule(epoch):
-    def U(tmp_lr):
-        factor = 1e2
-        np.random.seed(int(time.time()))
-        tmp_lr = np.random.random() * tmp_lr * random_range
-        # tmp_lr = np.random.random() * tmp_lr
-        return tmp_lr
-    def N(tmp_lr,mu=0,sigma=1):
-        np.random.seed(int(time.time()))
-        tmp_lr_factor = np.random.normal(mu,sigma)
-        tmp_lr_factor = abs(tmp_lr_factor)
-        tmp_lr *= tmp_lr_factor
-        return tmp_lr
+    #Learning Rate Schedule
+    lr = linear_init_lr
+    left = 0
+    right = epochs * 0.4
+    if epoch > epochs * 0.9:
+        lr *= 0.5e-3
+        left = epochs * 0.9
+        right = epochs
+    elif epoch > epochs * 0.8:
+        lr *= 1e-3
+        left = epochs * 0.8
+        right = epochs * 0.9
+    elif epoch > epochs * 0.6:
+        lr *= 1e-2
+        left = epochs * 0.6
+        right = epochs * 0.8
+    elif epoch > epochs * 0.4:
+        lr *= 1e-1
+        left = epochs * 0.4
+        right = epochs * 0.6
+
+    print('Bounder:', left + int((right - left) * 0.05))
+    if epoch < left + int((right - left) * 0.05):
+        if distribution_method == 'U':
+            lr = U(lr)
+        elif distribution_method == 'Base':
+            lr = lr
+    print('Learning rate: ', lr)
+    return lr
+
+def densenet_lr_schedule(epoch):
 
     #Learning Rate Schedule
     lr = linear_init_lr
-    if epoch >= epochs * 0.9:
-        lr *= 0.5e-3
-    elif epoch >= epochs * 0.8:
-        lr *= 1e-3
-    elif epoch >= epochs * 0.6:
+    if epoch >= epochs * 0.75:
         lr *= 1e-2
-    elif epoch >= epochs * 0.4:
+    elif epoch >= epochs * 0.5:
         lr *= 1e-1
 
     if distribution_method =='U':
@@ -123,11 +156,11 @@ def lr_schedule(epoch):
     print('Learning rate: ', lr)
     return lr
 
-Te = 20
+Te = 10
 tt = 0
 t0 = math.pi/2.0
 TeNext = Te
-multFactor = 2
+multFactor = multFac
 cyc = True
 def warm_start_lr_schedule(epoch):
     def WRSGN(epoch, tmp_lr):
@@ -151,6 +184,10 @@ def warm_start_lr_schedule(epoch):
     if cyc == True:
         lr = linear_init_lr
         lr = WRSGN(epoch,lr)
+        if distribution_method == 'U':
+            lr = U(lr)
+        elif distribution_method == 'Base':
+            lr = lr
     else:
         lr = linear_init_lr * 1e-3
     print('Learning rate: ', lr)
@@ -172,9 +209,13 @@ elif optimizer == 'Adagrad':
     max_lr = 0.1
 
 if lr_schedule_method == 'clr':
+    N = x_train.shape[0]
+    iteration = int(N/batch_size)
+    print('step_size',8*iteration)
     clr = CyclicLR(base_lr=base_lr, max_lr=max_lr,
-                   step_size=5000., mode='triangular2',
-                   distribution_method=distribution_method)
+                   step_size=8*iteration, mode=triangle_method,
+                   distribution_method=distribution_method,
+                   calm_down=0,random_range=random_range)
     init_lr = base_lr
 else:
     init_lr = lr_schedule(0)
@@ -183,15 +224,36 @@ else:
 
 #ResNet:
 # model = keras.applications.resnet50.ResNet50(input_shape=None, include_top=True, weights=None)
-if model == 'resnet':
-    model = resnet_v1(input_shape=input_shape, depth=resnet_depth,num_classes = num_classes)
-if model == 'densenet':
-    model = densenet.DenseNet(classes=num_classes, input_shape=input_shape, depth=40, growth_rate=12,
-                              bottleneck=True, reduction=0.5)
+if model_name == 'resnet':
+    model = resnet_v1(input_shape=input_shape, depth=resnet_depth, num_classes=num_classes)
+    # if dataset_name == 'CIFAR10':
+    #     model = resnet_v1(input_shape=input_shape, depth=resnet_depth, num_classes=num_classes)
+    # else:
+    #     model = resnet_v1(input_shape=input_shape, depth=resnet_depth, num_classes=num_classes)
+    # if dataset_name == 'CIFAR10':
+    #     model = resnet_v1(input_shape=input_shape, depth=resnet_depth,num_classes = num_classes)
+    # else:
+    #     model = resnet_v1(input_shape=input_shape,depth=resnet_depth,num_classes=num_classes)
+    aug = True
+if model_name == 'densenet':
+    print(model_name)
+    aug = True
+    model = densenet.DenseNet(nb_classes=num_classes,
+                              img_dim=input_shape,
+                              depth=40,
+                              nb_dense_block=3,
+                              growth_rate=12,
+                              nb_filter=16,
+                              dropout_rate=0,
+                              weight_decay=1e-4)
+if model_name == 'vgg':
+    # model = vgg(input_shape=input_shape,num_classes=num_classes)
+    model = vgg16(input_shape=input_shape, classes=num_classes)
+
 if optimizer=='Adam':
     opt = Adam(lr=init_lr)
 elif optimizer=='SGD':
-    opt = SGD(lr=init_lr)
+    opt = SGD(lr=init_lr,momentum=0.9)
 elif optimizer =='RMSprop':
     opt = RMSprop(lr=init_lr)
 elif optimizer == 'Adagrad':
@@ -219,6 +281,9 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 last_acc = 0
 best_acc = 0
 convergence_epoch = 0
+if 'noAug' in work_path_name:
+    aug = False
+    exp_name = exp_name + 'noAug'
 TB_log_path = work_path/TB_Logs_Path/exp_name
 def on_epoch_end(epoch, logs):
     # from ipdb import set_trace as tr; tr()
@@ -234,12 +299,33 @@ def on_epoch_end(epoch, logs):
     print('End of epoch')
     # renew_train_dataset()
 
+def random_crop_image(image,pad=4):
+    height, width = image.shape[:2]
+    zero_border_side = np.zeros((height,pad,3))
+    zero_border_top = np.zeros((pad,width+2*pad,3))
+    image_pad = np.concatenate((zero_border_side,image),axis=1)
+    image_pad = np.concatenate((image_pad,zero_border_side),axis=1)
+    image_pad = np.concatenate((zero_border_top,image_pad),axis=0)
+    image_pad = np.concatenate((image_pad,zero_border_top),axis=0)
+    # print(image_pad.shape)
+    # print(image_pad[:,:,0])
+    pad_hight,pad_width = image_pad.shape[:2]
+    dy = np.random.randint(0,pad_hight-height)
+    dx = np.random.randint(0,pad_width-width)
+    image_crop = image_pad[dy:dy+height,dx:dx+width,:]
+    # print(image_crop.shape)
+    # assert False
+    return image_crop
+
 
 on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
 
 if lr_schedule_method == 'linear':
-    scheduler = LearningRateScheduler(lr_schedule)
+    if model_name=='densenet':
+        scheduler = LearningRateScheduler(densenet_lr_schedule)
+    else:
+        scheduler = LearningRateScheduler(lr_schedule)
 if lr_schedule_method == 'clr':
     scheduler = clr
 if lr_schedule_method == 'warm_start':
@@ -247,6 +333,7 @@ if lr_schedule_method == 'warm_start':
 callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
 # Run training, with or without data augmentation.
 # Run training, with or without data augmentation.
+
 aug = True
 if aug == False:
     model.fit(x_train, y_train,
@@ -300,9 +387,6 @@ else:
         # fraction of images reserved for validation (strictly between 0 and 1)
         validation_split=0.0
     )
-
-    # Compute quantities required for featurewise normalization
-    # (std, mean, and principal components if ZCA whitening is applied).
     datagen.fit(x_train)
 
     # Fit the model on the batches generated by datagen.flow().

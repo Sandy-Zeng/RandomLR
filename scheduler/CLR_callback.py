@@ -60,12 +60,14 @@ class CyclicLR(Callback):
             iterations since start of cycle). Default is 'cycle'.
     """
 
-    def __init__(self, base_lr=0.001, max_lr=0.006, step_size=2000., mode='triangular',
+    def __init__(self, base_lr=0.001, max_lr=0.006, step_size=2000.,epochs=200, mode='triangular',
                  gamma=1., scale_fn=None, scale_mode='cycle',distribution_method='U',calm_down=20,random_range=1):
         super(CyclicLR, self).__init__()
 
         self.base_lr = base_lr
         self.max_lr = max_lr
+        self.init_base_lr = base_lr
+        self.init_max_lr = max_lr
         self.step_size = step_size
         self.mode = mode
         self.gamma = gamma
@@ -73,6 +75,7 @@ class CyclicLR(Callback):
         self.calm_down = calm_down
         self.count = calm_down
         self.random_range = random_range
+        self.epochs = epochs
         if scale_fn == None:
             if self.mode == 'triangular':
                 self.scale_fn = lambda x: 1.
@@ -156,6 +159,28 @@ class CyclicLR(Callback):
             K.set_value(self.model.optimizer.lr, self.N(self.clr()))
         if self.distribution_method == 'Base':
             K.set_value(self.model.optimizer.lr, self.clr())
+
+    def on_epoch_end(self, epoch, logs=None):
+        # self.max_lr = self.init_max_lr
+        # self.base_lr = self.init_base_lr
+        if epoch == self.epochs * 0.9:
+            # self.base_lr *= 0.5e-3
+            # self.max_lr  *= 0.5e-3
+            self._reset(new_base_lr=self.init_base_lr*0.5e-3,new_max_lr=self.init_max_lr*0.5e-3)
+        elif epoch == self.epochs * 0.8:
+            # self.base_lr *= 1e-3
+            # self.max_lr *= 1e-3
+            self._reset(new_base_lr=self.init_base_lr * 1e-3, new_max_lr=self.init_max_lr * 1e-3)
+        elif epoch == self.epochs * 0.6:
+            # self.base_lr *= 1e-2
+            # self.max_lr *= 1e-2
+            self._reset(new_base_lr=self.init_base_lr * 1e-2, new_max_lr=self.init_max_lr * 1e-2)
+        elif epoch == self.epochs * 0.4:
+            # self.base_lr *= 1e-1
+            # self.max_lr *= 1e-1
+            self._reset(new_base_lr=self.init_base_lr * 1e-1, new_max_lr=self.init_max_lr * 1e-1)
+        print(self.max_lr)
+        print(self.base_lr)
 
 
 

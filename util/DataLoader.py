@@ -9,6 +9,7 @@ class DataLoader():
         self.dataset_name = dataset_name
 
     def load_data(self):
+        print(self.dataset_name)
         if self.dataset_name == 'CIFAR10':
             print(self.dataset_name)
             (x_train, y_train), (x_test, y_test) = cifar10.load_data()
@@ -24,21 +25,49 @@ class DataLoader():
 
         input_shape = x_train.shape[1:]
 
-        x_train, x_test = self.preProcessData(x_train, x_test, subtract_pixel_mean=True)
-        datagen = self.data_augment(x_train=x_train)
-        return x_train,y_train,x_test,y_test,datagen,num_classes
+        x_train, x_test = self.preProcessData(x_train, x_test,self.dataset_name,subtract_pixel_mean=True)
+        return x_train,y_train,x_test,y_test,num_classes
 
-    def preProcessData(self,x_train, x_test, subtract_pixel_mean=True):
+    def preProcessData(self,x_train, x_test,dataset, subtract_pixel_mean=True):
         # Normalize data.
         x_train = x_train.astype('float32') / 255
         x_test = x_test.astype('float32') / 255
 
-        # If subtract pixel mean is enabled
-        if subtract_pixel_mean:
-            x_train_mean = np.mean(x_train, axis=0)
-            x_train -= x_train_mean
-            x_test -= x_train_mean
+        # # If subtract pixel mean is enabled
+        # if subtract_pixel_mean:
+        #     x_train_mean = np.mean(x_train, axis=0)
+        #     x_train -= x_train_mean
+        #     x_test -= x_train_mean
+
+        if dataset == 'CIFAR10':
+            mean = np.array([0.4914, 0.4822, 0.4465]).reshape(1, 1, 1, 3)
+            std = np.array([0.2023, 0.1994, 0.2010]).reshape(1, 1, 1, 3)
+        else:
+            mean = np.array([0.5074, 0.4869, 0.4411]).reshape(1, 1, 1, 3)
+            std = np.array([0.2675, 0.2566, 0.2763]).reshape(1, 1, 1, 3)
+        n_channels = x_train.shape[-1]
+        for i in range(n_channels):
+            x_train[:, :, :, i] = (x_train[:, :, :, i] - mean[:, :, :, i]) / std[:, :, :, i]
+            x_test[:, :, :, i] = (x_test[:, :, :, i] - mean[:, :, :, i]) / std[:, :, :, i]
         return x_train, x_test
+
+    def random_crop_image(image, pad=4):
+        height, width = image.shape[:2]
+        zero_border_side = np.zeros((height, pad, 3))
+        zero_border_top = np.zeros((pad, width + 2 * pad, 3))
+        image_pad = np.concatenate((zero_border_side, image), axis=1)
+        image_pad = np.concatenate((image_pad, zero_border_side), axis=1)
+        image_pad = np.concatenate((zero_border_top, image_pad), axis=0)
+        image_pad = np.concatenate((image_pad, zero_border_top), axis=0)
+        # print(image_pad.shape)
+        # print(image_pad[:,:,0])
+        pad_hight, pad_width = image_pad.shape[:2]
+        dy = np.random.randint(0, pad_hight - height)
+        dx = np.random.randint(0, pad_width - width)
+        image_crop = image_pad[dy:dy + height, dx:dx + width, :]
+        # print(image_crop.shape)
+        # assert False
+        return image_crop
 
     def data_augment(self,x_train):
         print('Using real-time data augmentation.')
@@ -83,7 +112,8 @@ class DataLoader():
             # image data format, either "channels_first" or "channels_last"
             data_format=None,
             # fraction of images reserved for validation (strictly between 0 and 1)
-            validation_split=0.0)
+            validation_split=0.0
+        )
 
         # Compute quantities required for featurewise normalization
         # (std, mean, and principal components if ZCA whitening is applied).

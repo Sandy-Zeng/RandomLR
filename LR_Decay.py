@@ -49,7 +49,7 @@ convergence_epoch = 0
 # Training parameters
 # exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.2f_%.4f_ResNet%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,peak_delay,linear_init_lr,depth)
 if model_name == 'resnet':
-    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_ResNet_%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,linear_init_lr,depth)
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_%d_ResNet_%d' % (dataset_name,epochs,batch_size,optimizer,distribution_method,lr_schedule_method,random_range,linear_init_lr,peak_delay,depth)
 if model_name == 'densenet':
     exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_DenseNet' % (
     dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range, linear_init_lr)
@@ -87,7 +87,7 @@ print("class num ",num_classes)
 # Path(work_path/'Layer_LID_nparray').mkdir(parents=True, exist_ok=True)
 input_shape = x_train.shape[1:]
 
-x_train, x_test = preProcessData(x_train,x_test,subtract_pixel_mean=True)
+x_train, x_test = preProcessData(x_train,x_test,dataset_name,subtract_pixel_mean=True)
 
 train_num,test_num = x_train.shape[0],x_test.shape[0]
 
@@ -158,7 +158,7 @@ lr_epoch = [epochs*0.4,epochs*0.6,epochs*0.8,epochs*0.9,epochs]
 def U(tmp_lr):
     np.random.seed(int(time.time()))
     # range = range_decay(epoch)
-    tmp_lr = np.random.random() * tmp_lr * random_range + tmp_lr / random_range
+    tmp_lr = np.random.random() * tmp_lr * random_range
     return tmp_lr
 
 def lr_schedule(epoch):
@@ -208,10 +208,7 @@ def densenet_lr_schedule(epoch):
 init_lr = lr_schedule(0)
 #ResNet:
 if model_name == 'resnet':
-    if dataset_name == 'CIFAR10':
-        model = resnet_v2(input_shape=input_shape, depth=depth, num_classes=num_classes)
-    else:
-        model = resnet_v2(input_shape=input_shape, depth=depth, num_classes=num_classes)
+    model = resnet_v2(input_shape=input_shape, depth=depth, num_classes=num_classes)
 if model_name == 'densenet':
     print(model_name)
     model = densenet.DenseNet(nb_classes=num_classes,

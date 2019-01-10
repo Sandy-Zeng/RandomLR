@@ -232,7 +232,7 @@ def resnet_v2(input_shape, depth, num_classes=10):
 
 
 
-def preProcessData(x_train,x_test,subtract_pixel_mean=True):
+def preProcessData(x_train,x_test,dataset,subtract_pixel_mean=True):
     # Normalize data.
     # x_train = x_train.astype('float32') / 255
     # x_test = x_test.astype('float32') / 255
@@ -251,15 +251,15 @@ def preProcessData(x_train,x_test,subtract_pixel_mean=True):
     # normalize = transforms.Normalize(mean=[x / 255.0 for x in [123.675, 116.28, 103.53]],
     #                                  std=[x / 255.0 for x in [58.395, 57.12, 57.375]])
     # import ipdb; ipdb.set_trace()
-    x_train_mean = np.array([x / 255.0 for x in [123.675, 116.28, 103.53]]).reshape(1,1,1,3)
-    x_train_std = np.array([x / 255.0 for x in [58.395, 57.12, 57.375]]).reshape(1,1,1,3)
-    # x_train = (x_train - x_train_mean) / x_train_std
-
+    if dataset == 'CIFAR10':
+        mean = np.array([0.4914, 0.4822, 0.4465]).reshape(1,1,1,3)
+        std = np.array([0.2023, 0.1994, 0.2010]).reshape(1,1,1,3)
+    else:
+        mean = np.array([0.5074, 0.4869, 0.4411]).reshape(1, 1, 1, 3)
+        std = np.array([0.2675, 0.2566, 0.2763]).reshape(1, 1, 1, 3)
     n_channels = x_train.shape[-1]
     for i in range(n_channels):
-        # mean = np.mean(X[:, :, :, i])
-        # std = np.std(X[:, :, :, i])
-        x_train[:, :, :, i] = (x_train[:, :, :, i] - x_train_mean[:,:,:,i]) / x_train_std[:,:,:,i]
-        x_test[:, :, :, i] = (x_test[:, :, :, i] - x_train_mean[:,:,:,i]) / x_train_std[:,:,:,i]
+        x_train[:, :, :, i] = (x_train[:, :, :, i] - mean[:,:,:,i]) / std[:,:,:,i]
+        x_test[:, :, :, i] = (x_test[:, :, :, i] - mean[:,:,:,i]) / std[:,:,:,i]
 
     return x_train,x_test

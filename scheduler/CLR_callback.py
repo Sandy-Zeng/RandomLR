@@ -76,6 +76,7 @@ class CyclicLR(Callback):
         self.count = calm_down
         self.random_range = random_range
         self.epochs = epochs
+        self.israndom = False
         if scale_fn == None:
             if self.mode == 'triangular':
                 self.scale_fn = lambda x: 1.
@@ -154,30 +155,24 @@ class CyclicLR(Callback):
             self.history.setdefault(k, []).append(v)
 
         if self.distribution_method == 'U':
-            K.set_value(self.model.optimizer.lr, self.U(self.clr()))
+            if self.israndom == True:
+                K.set_value(self.model.optimizer.lr, self.U(self.clr()))
+            else:
+                K.set_value(self.model.optimizer.lr, self.clr())
         if self.distribution_method == 'N':
             K.set_value(self.model.optimizer.lr, self.N(self.clr()))
         if self.distribution_method == 'Base':
             K.set_value(self.model.optimizer.lr, self.clr())
 
     def on_epoch_end(self, epoch, logs=None):
-        # self.max_lr = self.init_max_lr
-        # self.base_lr = self.init_base_lr
         if epoch == self.epochs * 0.9:
-            # self.base_lr *= 0.5e-3
-            # self.max_lr  *= 0.5e-3
             self._reset(new_base_lr=self.init_base_lr*0.5e-3,new_max_lr=self.init_max_lr*0.5e-3)
         elif epoch == self.epochs * 0.8:
-            # self.base_lr *= 1e-3
-            # self.max_lr *= 1e-3
             self._reset(new_base_lr=self.init_base_lr * 1e-3, new_max_lr=self.init_max_lr * 1e-3)
         elif epoch == self.epochs * 0.6:
-            # self.base_lr *= 1e-2
-            # self.max_lr *= 1e-2
             self._reset(new_base_lr=self.init_base_lr * 1e-2, new_max_lr=self.init_max_lr * 1e-2)
         elif epoch == self.epochs * 0.4:
-            # self.base_lr *= 1e-1
-            # self.max_lr *= 1e-1
+            self.israndom = True
             self._reset(new_base_lr=self.init_base_lr * 1e-1, new_max_lr=self.init_max_lr * 1e-1)
         print(self.max_lr)
         print(self.base_lr)

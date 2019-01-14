@@ -1,6 +1,6 @@
 from keras.optimizers import SGD, RMSprop, Adagrad
 import sys
-sys.path.append('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
+sys.path.append('/home/ouyangzhihao/Backup/Exp/ZYY/RandomLR')
 import models.densenet_cifar10 as densenet
 from models.LR_resNet import *
 from models.vgg import model as vgg
@@ -11,6 +11,9 @@ from keras.optimizers import Adam
 from keras.callbacks import ReduceLROnPlateau, LambdaCallback
 from keras.callbacks import TensorBoard
 import numpy as np
+from scheduler.optimizers import SGD_RM
+from keras.models import load_model
+from models.wide_residual_network import create_wide_residual_network
 
 if(len(sys.argv)>11):
     print('Right Parameter')
@@ -49,7 +52,7 @@ else:
     multFac = 1
 
 
-work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
+work_path = Path('/home/ouyangzhihao/Backup/Exp/ZYY/RandomLR')
 work_path = work_path/work_path_name
 
 # work_path = Path('/unsullied/sharefs/ouyangzhihao/DataRoot/Exp/HTB/LID_Research/LR_Random')
@@ -62,7 +65,11 @@ if model_name == 'densenet':
     exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_DenseNet' % (
     dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range, linear_init_lr)
 if model_name == 'vgg':
-    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_VGG' % (
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_VGG_%d' % (
+        dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range,
+        linear_init_lr,resnet_depth)
+if model_name == 'wrn':
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_WRN' % (
         dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range,
         linear_init_lr)
 
@@ -91,6 +98,9 @@ if optimizer=='Adam':
 elif optimizer=='SGD':
     base_lr = 0.1
     max_lr = 0.3
+elif optimizer == 'SGD_Mon':
+    base_lr = 0.1
+    max_lr = 0.3
 elif optimizer =='RMSprop':
     max_lr = 0.006
 elif optimizer == 'Adagrad':
@@ -102,17 +112,20 @@ if lr_schedule_method == 'linear':
         densenet_scheduler = DenseNetSchedule(epochs=epochs,init_lr=linear_init_lr,distribution_method=distribution_method,random_potion=0.4,random_range=random_range)
         scheduler = densenet_scheduler
     else:
-        # step_decay = StepDecay(epochs=epochs,init_lr=linear_init_lr,distribution_method=distribution_method,random_potion=random_potion,random_range=random_range)
-        # scheduler = step_decay
-        # N = x_train.shape[0]
-        # iteration = int(N / batch_size)
-        # batches = epochs * iteration
-        # step_decay = BatchRLR(batches=batches, init_lr=linear_init_lr, distribution_method=distribution_method,
-        #                        random_potion=random_potion, random_range=random_range)
-        # scheduler = step_decay
+        step_decay = StepDecay(epochs=epochs,init_lr=linear_init_lr,distribution_method=distribution_method,random_potion=random_potion,random_range=random_range)
+        scheduler = step_decay
+if lr_schedule_method == 'post_random':
+    if model_name == 'densenet':
+        densenet_scheduler = DenseNetSchedule(epochs=epochs,init_lr=linear_init_lr,distribution_method=distribution_method,random_potion=0.4,random_range=random_range)
+        scheduler = densenet_scheduler
+    else:
         step_decay = StepDecayPost(epochs=epochs, init_lr=linear_init_lr, distribution_method=distribution_method,
                                random_potion=random_potion, random_range=random_range)
         scheduler = step_decay
+if lr_schedule_method == 'batch_random':
+    step_decay = BatchRLR(epochs=epochs, init_lr=linear_init_lr, distribution_method=distribution_method,
+                           random_potion=random_potion, random_range=random_range)
+    scheduler = step_decay
 if lr_schedule_method == 'warm_start':
     WS_Scheduler = Warm_Start_Scheduler(init_lr=linear_init_lr,Te=Te,multFac=multFac,distribution_method=distribution_method,random_range=random_range,random_potion=random_potion,epochs=epochs)
     scheduler = WS_Scheduler
@@ -145,11 +158,36 @@ if optimizer=='Adam':
     opt = Adam(lr=init_lr)
 elif optimizer=='SGD':
     print(optimizer)
+    opt = SGD(lr=init_lr)
+elif optimizer == 'SGD_Mon':
     opt = SGD(lr=init_lr,momentum=0.9)
+elif optimizer=='SGD_RM':
+    opt = SGD_RM(lr=init_lr)
 elif optimizer =='RMSprop':
     opt = RMSprop(lr=init_lr)
 elif optimizer == 'Adagrad':
     opt = Adagrad(lr=init_lr)
+
+# Prepare model model saving directory.
+# save_dir = os.path.join(os.getcwd(), work_path_name+'/saved_models')
+# model_name = '%s.{epoch:03d}.h5' % (exp_name)
+# if not os.path.isdir(save_dir):
+#     os.makedirs(save_dir)
+# filepath = os.path.join(save_dir, model_name)
+#
+# # Prepare callbacks for model saving and for learning rate adjustment.
+# checkpoint = ModelCheckpoint(filepath=filepath,
+#                              monitor='val_acc',
+#                              verbose=1,
+#                              save_best_only=True,
+#                              period=30)
+
+# saved_models = os.listdir(save_dir)
+# for model_file in saved_models:
+#     if exp_name in model_file:
+#         print('Having Models!')
+#         model = load_model(os.path.join(save_dir,model_file))
+#         break
 
 
 #define models
@@ -167,6 +205,8 @@ if model_name == 'densenet':
                               weight_decay=1e-4)
 if model_name == 'vgg':
     model = vgg(input_shape=input_shape,num_classes=num_classes)
+if model_name == 'wrn':
+    model = create_wide_residual_network(input_dim=input_shape,nb_classes=num_classes,N=2,k=8)
 
 model.compile(loss='categorical_crossentropy',
               optimizer=opt,
@@ -195,6 +235,8 @@ def on_epoch_end(epoch, logs):
     print('End of epoch')
     # renew_train_dataset()
 on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
+
+
 callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
 
 aug = True

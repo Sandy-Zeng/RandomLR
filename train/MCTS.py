@@ -1,6 +1,8 @@
 import sys
 import time
 from random import choice
+import sys
+sys.path.append('/home/ouyangzhihao/Backup/Exp/ZYY/RandomLR')
 
 import math
 import numpy as np
@@ -10,8 +12,9 @@ from keras.callbacks import TensorBoard
 from keras.optimizers import *
 from sklearn.model_selection import train_test_split
 
-from DataLoader import DataLoader
-from models.LR_resNet import resnet_v1
+from models.LR_resNet import resnet_v2
+from util.DataLoader import DataLoader
+from models.LR_resNet import *
 
 
 class Node(object):
@@ -47,7 +50,7 @@ class Node(object):
 
     def update_ust(self):
         for child in self.children:
-            child.ust_score = child.Q / (child.N) + 0.2 * math.sqrt(math.log(self.N) / (child.N))
+            child.ust_score = child.Q / (child.N) + 0.1 * math.sqrt(math.log(self.N) / (child.N))
 
     def update_status(self,result):
         self.Q = self.Q + result
@@ -132,7 +135,7 @@ class MCTS(object):
                 for i in range(random_num):
                     # randomly generate the learning rate
                     temp_lr = U(lr, random_range)
-                    # print(temp_lr)
+                    print(temp_lr)
                     child = Node(init_model_weight=None, depth=epoch+init_depth+1, parent=inter_node, learning_rate=temp_lr)
                     inter_node.children.append(child)
                     prod_cache.append(child)
@@ -181,7 +184,7 @@ class MCTS(object):
         #           shuffle=True)
         local_model.fit_generator(
             datagen.flow(self.eval_x, self.eval_y, batch_size=batch_size),
-            validation_data=(x_test, y_test),
+            validation_data=(x_val, y_val),
             epochs=self.mini_epoch, verbose=1, workers=4,
         )
         return local_model.get_weights()
@@ -291,7 +294,7 @@ def U(tmp_lr,random_range):
     # rand = (random_range * np.random.random()+1)
     # print(rand)
     # tmp_lr = tmp_lr ** (factor * rand)
-    tmp_lr = np.random.random() * tmp_lr * random_range + tmp_lr/random_range
+    tmp_lr = tmp_lr * (random_range * np.random.random())
     return tmp_lr
 
 def decay_lr(epoch):
@@ -330,11 +333,11 @@ def on_epoch_end(epoch, logs):
     print('End of epoch')
 
 def evaluate(init_lr,exp_name):
-    model = resnet_v1(input_shape=input_shape, depth=5 * 6 + 2, num_classes=num_classes)
+    model = resnet_v2(input_shape=input_shape, depth=20, num_classes=num_classes)
     if optimizer == 'Adam':
         opt = Adam(lr=init_lr)
     elif optimizer == 'SGD':
-        opt = SGD(lr=init_lr)
+        opt = SGD(lr=init_lr,momentum=0.9)
     elif optimizer == 'RMSprop':
         opt = RMSprop(lr=init_lr)
     elif optimizer == 'Adagrad':
@@ -402,20 +405,63 @@ if __name__ == '__main__':
     work_path_name = str(sys.argv[11])
 
     from pathlib import *
-    work_path = Path('/home/ouyangzhihao/sss/Exp/ZYY/RandomLR')
+    work_path = Path('/home/ouyangzhihao/Backup/Exp/ZYY/RandomLR')
 
     total_depth = int(epochs/mini_epoch)  #20
     # mini_epoch = int(epochs / total_depth) #10
 
-    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_%d_%d_MCTS_update' % (
-        dataset_name, epochs, batch_size, optimizer, random_range, init_lr, random_num, power,mini_epoch,sub_tree_depth
+    exp_name = '%s_%d_%d_%s_%d_%.4f_%d_%d_%d_%d_%d_MCTS' % (
+        dataset_name, epochs, batch_size, optimizer, random_range, init_lr, random_num, power,mini_epoch,sub_tree_depth,0.1
     )
     if ((work_path / work_path_name / 'TB_Logs' / exp_name).exists()):
         print('Already Finished!')
         exit()
 
     data_loader = DataLoader(dataset_name=dataset_name)
-    x_train, y_train, x_test, y_test, datagen,num_classes = data_loader.load_data()
+    x_train, y_train, x_test, y_test,num_classes = data_loader.load_data()
+    print('Using real-time data augmentation.')
+    datagen = ImageDataGenerator(
+        # set input mean to 0 over the dataset
+        featurewise_center=False,
+        # set each sample mean to 0
+        samplewise_center=False,
+        # divide inputs by std of dataset
+        featurewise_std_normalization=False,
+        # divide each input by its std
+        samplewise_std_normalization=False,
+        # apply ZCA whitening
+        zca_whitening=False,
+        # epsilon for ZCA whitening
+        zca_epsilon=1e-06,
+        # randomly rotate images in the range (deg 0 to 180)
+        rotation_range=10,
+        # randomly shift images horizontally
+        width_shift_range=0.1,
+        # randomly shift images vertically
+        height_shift_range=0.1,
+        # set range for random shear
+        shear_range=0.,
+        # set range for random zoom
+        zoom_range=0.,
+        # set range for random channel shifts
+        channel_shift_range=0.,
+        # set mode for filling points outside the input boundaries
+        fill_mode='nearest',
+        # value used for fill_mode = "constant"
+        cval=0.,
+        # randomly flip images
+        horizontal_flip=True,
+        # randomly flip images
+        vertical_flip=False,
+        # set rescaling factor (applied before any other transformation)
+        rescale=None,
+        # set function that will be applied on each input
+        preprocessing_function=None,
+        # image data format, either "channels_first" or "channels_last"
+        data_format=None,
+        # fraction of images reserved for validation (strictly between 0 and 1)
+        validation_split=0.0
+    )
     datagen.fit(x_train)
 
     train_sample_num = x_train.shape[0]
@@ -427,14 +473,14 @@ if __name__ == '__main__':
     assert x_train_mini.shape[0]==mini_train_sample_num
     input_shape = x_train.shape[1:]
 
-    model = resnet_v1(input_shape=input_shape, depth=5 * 6 + 2, num_classes=num_classes)
+    model = resnet_v2(input_shape=input_shape, depth=20, num_classes=num_classes)
 
     # root = generate_hole_tree(model_weight=model.get_weights(),mini_epochs=3,init_lr=init_lr,random_range=random_range,random_num=random_num)
     # test_gen_hole_tree(root)
     if optimizer == 'Adam':
         opt = Adam(lr=init_lr)
     elif optimizer == 'SGD':
-        opt = SGD(lr=init_lr)
+        opt = SGD(lr=init_lr,momentum=0.9)
     elif optimizer == 'RMSprop':
         opt = RMSprop(lr=init_lr)
     elif optimizer == 'Adagrad':

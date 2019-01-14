@@ -1,4 +1,5 @@
 from keras.datasets import cifar10
+from keras.datasets import mnist
 
 from models.LR_resNet import *
 
@@ -18,6 +19,10 @@ class DataLoader():
             print(self.dataset_name)
             (x_train, y_train), (x_test, y_test) = cifar100.load_data()
             num_classes = len(set(y_train.flatten()))
+        if self.dataset_name == 'MNIST':
+            print(self.dataset_name)
+            (x_train, y_train), (x_test, y_test) = mnist.load_data()
+
         num_classes = len(set(y_train.flatten()))
 
         y_train = keras.utils.to_categorical(y_train, num_classes)

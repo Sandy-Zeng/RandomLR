@@ -86,6 +86,12 @@ var function_g = svg.append("g").on("mousedown", mousedown),
 
 /* Value of f at (x, y) */
 function f(x, y) {
+
+    // Rosenbrock Function
+    // return Math.pow(1 - x, 2) + 2 * Math.pow(y - x * x, 2);
+    //Rastrigin-type Function
+    return .2 * (Math.sin(10 * x - Math.PI / 2) + Math.sin(10 * y - Math.PI / 2)) + Math.pow(x, 2) + Math.pow(y, 2);
+    //baseline
     return -2 * Math.exp(-((x - 1) * (x - 1) + y * y) / .2) + -3 * Math.exp(-((x + 1) * (x + 1) + y * y) / .2) + x * x + y * y;
 }
 
@@ -248,7 +254,7 @@ function get_adam_path(x0, y0, learning_rate, num_steps, beta_1, beta_2, eps) {
     var x1, y1, gradient;
     for (i = 0; i < num_steps; i++) {
         // RLR
-        // random_lr_factor = Math.random() * 10
+        random_lr_factor = Math.random() * 10
         // Baseline
         random_lr_factor = 5
         learning_rate = init_lr * random_lr_factor

@@ -126,6 +126,7 @@
         else if (current_step > num_steps * 0.4) {
             learning_rate = learning_rate * 1e-1;
         }
+        console.log(learning_rate);
         return learning_rate;
     }
 
@@ -334,19 +335,19 @@
         gradient_path_g.selectAll("path").remove();
 
         if (draw_bool.SGD) {
-            var sgd_data = get_sgd_path(x0, y0, 2e-2, 500);
+            var sgd_data = get_sgd_path(x0, y0, 2e-1, 500);
             draw_path(sgd_data, "sgd");
         }
         if (draw_bool.Momentum) {
-            var momentum_data = get_momentum_path(x0, y0, 1e-2, 200, 0.8);
+            var momentum_data = get_momentum_path(x0, y0, 1e-1, 200, 0.8);
             draw_path(momentum_data, "momentum");
         }
         if (draw_bool.RMSProp) {
-            var rmsprop_data = get_rmsprop_path(x0, y0, 1e-2, 300, 0.99, 1e-6);
+            var rmsprop_data = get_rmsprop_path(x0, y0, 1e-1, 300, 0.99, 1e-6);
             draw_path(rmsprop_data, "rmsprop");
         }
         if (draw_bool.Adam) {
-            var adam_data = get_adam_path(x0, y0, 1e-2, 100, 0.7, 0.999, 1e-6);
+            var adam_data = get_adam_path(x0, y0, 1e-1, 100, 0.7, 0.999, 1e-6);
             draw_path(adam_data, "adam");
         }
     }

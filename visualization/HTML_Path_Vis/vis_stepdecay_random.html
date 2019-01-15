@@ -112,6 +112,7 @@
 
     function randomize_uniform(x, random_range) {
         var random_x = Math.random() * x * random_range;
+        console.log('*********');
         return random_x;
     }
 
@@ -144,7 +145,7 @@
         }
 
         var demarcation = left + (right - left) * random_portion
-        if (num_steps < demarcation && num_steps > num_steps * 0.4) {
+        if (current_step < demarcation && current_step > num_steps * 0.4) {
             learning_rate = randomize_uniform(learning_rate, random_range)
         }
         return learning_rate;

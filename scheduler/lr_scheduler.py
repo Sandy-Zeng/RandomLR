@@ -18,8 +18,16 @@ def UA(tmp_lr,random_range):
 def N(tmp_lr, mu=4, sigma=1):
     np.random.seed(int(time.time()))
     tmp_lr_factor = np.random.normal(mu, sigma)
-    tmp_lr_factor = abs(tmp_lr_factor) * tmp_lr
-    tmp_lr = tmp_lr + tmp_lr_factor
+    # tmp_lr_factor = abs(tmp_lr_factor) * tmp_lr
+    # tmp_lr = tmp_lr + tmp_lr_factor
+    tmp_lr = tmp_lr * tmp_lr_factor
+    return tmp_lr
+
+def LogN(tmp_lr, mu=4, sigma=1):
+    np.random.seed(int(time.time()))
+    tmp_lr_factor = np.random.lognormal(mu, sigma)
+    # tmp_lr_factor = abs(tmp_lr_factor) * tmp_lr
+    tmp_lr = tmp_lr * tmp_lr_factor
     return tmp_lr
 
 class StepDecay(Callback):
@@ -119,57 +127,41 @@ class StepDecayPost(Callback):
         self.distribution_method = distribution_method
         self.random_potion = random_potion
         self.random_range = random_range
-        self.count_down = 19
+        self.count_down = 5
         self.count = 0
         self.random_lr = init_lr
 
     def lr_schedule(self,epoch):
         #Learning Rate Schedule
         lr = self.linear_init_lr
-        left = 0
-        right = self.epochs * 0.4
+        if self.random_potion == 0:
+            first_decay = 0.4
+        else:
+            first_decay = self.random_potion
+        first_decay = min(0.4,first_decay)
         if epoch > self.epochs * 0.9:
             lr *= 0.5e-3
-            left = self.epochs * 0.9
-            right = self.epochs
         elif epoch > self.epochs * 0.8:
             lr *= 1e-3
-            left = self.epochs * 0.8
-            right = self.epochs * 0.9
         elif epoch > self.epochs * 0.6:
             lr *= 1e-2
-            left = self.epochs * 0.6
-            right = self.epochs * 0.8
-        elif epoch > self.epochs * 0.4:
+        elif epoch > self.epochs * first_decay:
             lr *= 1e-1
-            left = self.epochs * 0.4
-            right = self.epochs * 0.6
 
-        bounder = left + int((right - left) * self.random_potion)
-        if epoch < bounder and epoch>self.epochs*0.4:
-            print('Bounder:', bounder)
+        if  epoch>self.epochs*self.random_potion:
             if self.distribution_method == 'U':
-                # if (epoch - left) < ((right - left)*(self.random_potion/2)):
-                #     adaptive_range = (epoch-left)/float((right - left) * (self.random_potion)/2) * self.random_range + 0.1
-                #     lr = U(lr,adaptive_range)
-                # else:
-                #     lr = U(lr,self.random_range+0.1)
-                # adaptive_range = (right - epoch) / float(
-                #     (right - left)) * self.random_range + 0.1
-                # lr = U(lr, adaptive_range)
                 lr = U(lr, self.random_range)
+                # if self.count == 0:
+                #     lr = U(lr, self.random_range)
+                #     self.count = self.count_down
+                # else:
+                #     self.count = self.count - 1
             if self.distribution_method == 'UA':
                 lr = UA(lr,self.random_range)
-            if self.distribution_method == 'UC':
-                if self.count == 0:
-                    lr = U(lr,self.random_range)
-                    self.random_lr = lr
-                    self.count = self.count_down
-                else:
-                    lr = self.random_lr
-                    self.count -= 1
             if self.distribution_method == 'N':
-                lr = N(lr)
+                lr = N(lr,mu=self.random_range)
+            if self.distribution_method == 'LogN':
+                lr = LogN(lr)
             elif self.distribution_method == 'Base':
                 lr = lr
         print('Learning rate: ', lr)
@@ -442,7 +434,7 @@ class Exp(Callback):
         lr = float(K.get_value(self.model.optimizer.lr))
         logs['lr'] = lr
         print('Learning Rate:',lr)
-        if epoch > 80 and epoch<130:
+        if epoch > 80:
             self.israndom = True
         else:
             self.israndom = False

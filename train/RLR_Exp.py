@@ -14,6 +14,9 @@ import numpy as np
 from scheduler.optimizers import SGD_RM
 from keras.models import load_model
 from models.wide_residual_network import create_wide_residual_network
+from models.vgg_bn import model as vgg_bn
+from models.vgg_nodropout import model as vgg_nodropout
+from scheduler.ladder_scheduler import LadderScheduler
 
 if(len(sys.argv)>11):
     print('Right Parameter')
@@ -32,6 +35,7 @@ if(len(sys.argv)>11):
     triangle_method = sys.argv[13]
     multFac = int(sys.argv[14])
     random_potion = float(sys.argv[15])
+    data_aug = int(sys.argv[16])
 else:
     print('Wrong Params')
     # exit()
@@ -64,10 +68,10 @@ if model_name == 'resnet':
 if model_name == 'densenet':
     exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_DenseNet' % (
     dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range, linear_init_lr)
-if model_name == 'vgg':
-    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_VGG_%d' % (
+if 'vgg' in model_name:
+    exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_%s_%d_%.2f' % (
         dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range,
-        linear_init_lr,resnet_depth)
+        linear_init_lr,model_name,16,random_potion)
 if model_name == 'wrn':
     exp_name = '%s_%d_%d_%s_%s_%s_%.2f_%.4f_WRN' % (
         dataset_name, epochs, batch_size, optimizer, distribution_method, lr_schedule_method, random_range,
@@ -140,6 +144,10 @@ if lr_schedule_method == 'clr':
                    epochs=epochs)
     scheduler = clr
     init_lr = base_lr
+if lr_schedule_method == 'ladder':
+    ladder = LadderScheduler(base_lr=base_lr,max_lr=max_lr,step_size=random_range,calm_down=random_potion,epochs=epochs)
+    scheduler = ladder
+    init_lr = base_lr
 if lr_schedule_method == 'constant':
     scheduler = Constant(init_lr=linear_init_lr,epochs=epochs,distribution_method=distribution_method,random_range=random_range,random_potion=0.4)
 if lr_schedule_method == 'exp':
@@ -152,7 +160,7 @@ if lr_schedule_method == 'exp':
     scheduler = Exp(init_lr=linear_init_lr,epochs=epochs,decay_step=decay_step,distribution_method=distribution_method,random_range=random_range,random_potion=0.4)
     init_lr = scheduler.lr_schedule()
 
-if lr_schedule_method != 'exp' and lr_schedule_method != 'clr':
+if lr_schedule_method != 'exp' and lr_schedule_method != 'clr' and lr_schedule_method != 'ladder':
     init_lr = scheduler.lr_schedule(0)
 if optimizer=='Adam':
     opt = Adam(lr=init_lr)
@@ -205,6 +213,12 @@ if model_name == 'densenet':
                               weight_decay=1e-4)
 if model_name == 'vgg':
     model = vgg(input_shape=input_shape,num_classes=num_classes)
+if model_name == 'vgg_bn':
+    print(model_name)
+    model = vgg_bn(input_shape=input_shape,num_classes=num_classes)
+if model_name == 'vgg_nodropout':
+    print(model_name)
+    model = vgg_nodropout(input_shape=input_shape, num_classes=num_classes)
 if model_name == 'wrn':
     model = create_wide_residual_network(input_dim=input_shape,nb_classes=num_classes,N=2,k=8)
 
@@ -239,7 +253,11 @@ on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
 callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
 
-aug = True
+if data_aug == 1:
+    aug = True
+else:
+    aug = False
+
 if aug == False:
     model.fit(x_train, y_train,
               batch_size=batch_size,
@@ -287,7 +305,7 @@ else:
         # set function that will be applied on each input
         preprocessing_function=None,
         # image data format, either "channels_first" or "channels_last"
-        data_format=None,
+        data_format="channels_last",
         # fraction of images reserved for validation (strictly between 0 and 1)
         validation_split=0.0
     )

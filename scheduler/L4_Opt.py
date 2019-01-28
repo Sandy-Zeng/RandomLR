@@ -80,10 +80,10 @@ class L4_Mom(Optimizer):
         self.updates = [K.update_add(self.iterations, 1)]
 
         min_loss_to_use = self.minloss_factor * self.min_loss
-        momtransform = MomentumTransform()
-        new_grads = momtransform.momgrad(grads)
+        # momtransform = MomentumTransform()
+        # new_grads = momtransform.momgrad(grads)
         self.l_rate = self.fraction * (loss - min_loss_to_use) / (
-            n_inner_product(new_grads,new_grads) + self.epsilon)
+            n_inner_product(grads,grads) + self.epsilon)
 
         # new_grads = [direction * l_rate for direction in directions]
         tf.summary.scalar('min_loss_estimate', self.min_loss)

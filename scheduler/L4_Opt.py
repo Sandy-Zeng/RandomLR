@@ -49,7 +49,7 @@ class L4_Mom(Optimizer):
                  nesterov=False,fraction=0.15, minloss_factor=0.9, init_factor=0.75,
                  minloss_forget_time=1000.0, epsilon=1e-12,
                  gradient_estimator='momentum', gradient_params=None,
-                 direction_estimator='adam', direction_params=None,log_dir='',**kwargs):
+                 direction_estimator='adam', direction_params=None,**kwargs):
         super(L4_Mom, self).__init__(**kwargs)
         with K.name_scope(self.__class__.__name__):
             self.iterations = K.variable(0, dtype='int64', name='iterations')
@@ -65,7 +65,6 @@ class L4_Mom(Optimizer):
         self.minloss_increase_rate = 1.0 + 1.0 / minloss_forget_time
         self.epsilon = epsilon
         self.init_factor = init_factor
-        self.log_dir = log_dir
 
     @interfaces.legacy_get_updates_support
     def get_updates(self, loss, params):
@@ -77,6 +76,7 @@ class L4_Mom(Optimizer):
         #     self.min_loss = K.min(self.min_loss,loss)
         ml_newval = tf.cond(tf.equal(self.iterations, 0), lambda: self.init_factor * loss,
                             lambda: tf.minimum(self.min_loss, loss))
+        self.loss = loss
         self.updates = [K.update_add(self.iterations, 1)]
 
         min_loss_to_use = self.minloss_factor * self.min_loss
@@ -85,20 +85,8 @@ class L4_Mom(Optimizer):
         self.l_rate = self.fraction * (loss - min_loss_to_use) / (
             n_inner_product(grads,grads) + self.epsilon)
 
-        # new_grads = [direction * l_rate for direction in directions]
-        tf.summary.scalar('min_loss_estimate', self.min_loss)
-        tf.summary.scalar('effective_learning_rate', self.l_rate)
-        self.merged = tf.summary.merge_all()
-        self.writer = tf.summary.FileWriter(self.log_dir)
-
         self.min_loss = self.minloss_increase_rate * self.min_loss
-        # K.set_value(self.lr,l_rate)
-        # self.lr = l_rate
 
-        lr = self.lr
-        if self.initial_decay > 0:
-            lr = lr * (1. / (1. + self.decay * K.cast(self.iterations,
-                                                      K.dtype(self.decay))))
         # momentum
         shapes = [K.int_shape(p) for p in params]
         moments = [K.zeros(shape) for shape in shapes]
@@ -106,12 +94,7 @@ class L4_Mom(Optimizer):
         for p, g, m in zip(params, grads, moments):
             v = self.momentum * m - self.l_rate * g  # velocity
             self.updates.append(K.update(m, v))
-
-            if self.nesterov:
-                new_p = p + self.momentum * v - lr * g
-            else:
-                new_p = p + v
-
+            new_p = p + v
             # Apply constraints.
             if getattr(p, 'constraint', None) is not None:
                 new_p = p.constraint(new_p)

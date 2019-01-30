@@ -18,7 +18,7 @@ from models.vgg_bn import model as vgg_bn
 from models.vgg_nodropout import model as vgg_nodropout
 from scheduler.ladder_scheduler import LadderScheduler
 from scheduler.L4_Opt import L4_Mom
-from scheduler.L4_gra_opt import L4_Mom as L4
+import tensorflow as tf
 
 if(len(sys.argv)>11):
     print('Right Parameter')
@@ -164,6 +164,111 @@ if lr_schedule_method == 'exp':
 
 TB_log_path = work_path/TB_Logs_Path/exp_name
 
+class LRTensorBoard(TensorBoard):
+    def __init__(self, log_dir,train_data=None):  # add other arguments to __init__ if you need
+        super().__init__(log_dir=log_dir)
+        update_freq = 'batch'
+        if update_freq == 'batch':
+            # It is the same as writing as frequently as possible.
+            self.update_freq = 1
+        else:
+            self.update_freq = update_freq
+        self.samples_seen = 0
+        self.samples_seen_at_last_write = 0
+        self.train_data = train_data
+
+
+    def set_model(self, model):
+        self.model = model
+        if K.backend() == 'tensorflow':
+            self.sess = K.get_session()
+        if self.merged is None:
+            # 显示学习率的变化
+            # self.merged = tf.summary.merge_all()
+            self.val_lr_summary = tf.summary.scalar("val_l4_lr", self.model.optimizer.l_rate)
+            # self.loss_summary = tf.summary.scalar('min_loss',self.model.optimizer.min_loss)
+
+        self.merged = tf.summary.merge_all()
+        self.lr_summary = tf.summary.scalar("l4_lr", self.model.optimizer.l_rate)
+
+        if self.write_graph:
+            self.writer = tf.summary.FileWriter(self.log_dir, self.sess.graph)
+        else:
+            self.writer = tf.summary.FileWriter(self.log_dir)
+
+    def on_epoch_end(self, epoch, logs=None):
+        tlogs = logs or {}
+
+        if self.validation_data:
+            val_data = self.validation_data
+            tensors = (self.model.inputs +
+                       self.model.targets +
+                       self.model.sample_weights)
+
+            if self.model.uses_learning_phase:
+                tensors += [K.learning_phase()]
+
+            assert len(val_data) == len(tensors)
+            val_size = val_data[0].shape[0]
+            i = 0
+            while i < val_size:
+                step = min(self.batch_size, val_size - i)
+                if self.model.uses_learning_phase:
+                    # do not slice the learning phase
+                    batch_val = [x[i:i + step] for x in val_data[:-1]]
+                    batch_val.append(val_data[-1])
+                else:
+                    batch_val = [x[i:i + step] for x in val_data]
+                assert len(batch_val) == len(tensors)
+                feed_dict = dict(zip(tensors, batch_val))
+                # print(self.merged)
+                result = self.sess.run([self.merged], feed_dict=feed_dict)
+                summary_str = result[0]
+                self.writer.add_summary(summary_str, epoch)
+                i += self.batch_size
+
+        if self.update_freq == 'epoch':
+            index = epoch
+        else:
+            index = self.samples_seen
+        self._write_logs(logs, index)
+
+    def _write_logs(self, logs, index):
+        for name, value in logs.items():
+            if name in ['batch', 'size']:
+                continue
+            summary = tf.Summary()
+            summary_value = summary.value.add()
+            if isinstance(value, np.ndarray):
+                summary_value.simple_value = value.item()
+            else:
+                summary_value.simple_value = value
+            summary_value.tag = name
+            self.writer.add_summary(summary, index)
+        self.writer.flush()
+
+    def on_batch_end(self, batch, logs=None):
+        if self.update_freq != 'epoch':
+            self.samples_seen += logs['size']
+            samples_seen_since = self.samples_seen - self.samples_seen_at_last_write
+            if samples_seen_since >= self.update_freq:
+                tensors = (self.model.inputs +
+                           self.model.targets +
+                           self.model.sample_weights)
+                weight_tensor = [1]*batch_size
+                weight_tensor = np.asarray(weight_tensor)
+                feed = self.train_data + (weight_tensor,)
+                feed_dict = dict(zip(tensors, feed))
+                summary = self.sess.run(self.lr_summary, feed_dict=feed_dict)
+                # lrate = self.sess.run(self.model.optimizer.l_rate, feed_dict=feed_dict)
+                # print('lrate',lrate)
+                self.writer.add_summary(summary, self.samples_seen)
+                self._write_logs(logs, self.samples_seen)
+                self.samples_seen_at_last_write = self.samples_seen
+
+
+# tb_callbacks = LRTensorBoard(log_dir = TB_log_dir)
+
 if lr_schedule_method != 'exp' and lr_schedule_method != 'clr' and lr_schedule_method != 'ladder':
     init_lr = scheduler.lr_schedule(0)
 if optimizer=='Adam':
@@ -180,7 +285,7 @@ elif optimizer =='RMSprop':
 elif optimizer == 'Adagrad':
     opt = Adagrad(lr=init_lr)
 elif optimizer == 'L4':
-    opt = L4_Mom(log_dir= (TB_log_path.__str__()))
+    opt = L4_Mom()
 
 # Prepare model model saving directory.
 # save_dir = os.path.join(os.getcwd(), work_path_name+'/saved_models')
@@ -255,8 +360,11 @@ def on_epoch_end(epoch, logs):
     # renew_train_dataset()
 on_epoch_end_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
-
-callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
+# if optimizer == 'L4':
+#     callbacks = [on_epoch_end_callback, scheduler, lr_reducer, LRTensorBoard(log_dir=TB_log_path.__str__(),train_data=)]
+# else:
+#     callbacks = [on_epoch_end_callback,scheduler,lr_reducer,TensorBoard(log_dir= (TB_log_path.__str__()))]
+# callbacks = [on_epoch_end_callback,scheduler,lr_reducer,LRTensorBoard(log_dir = TB_log_path.__str__())]
 
 if data_aug == 1:
     aug = True
@@ -264,6 +372,11 @@ else:
     aug = False
 
 if aug == False:
+    if optimizer == 'L4':
+        callbacks = [on_epoch_end_callback, scheduler, lr_reducer,
+                     LRTensorBoard(log_dir=TB_log_path.__str__())]
+    else:
+        callbacks = [on_epoch_end_callback, scheduler, lr_reducer, TensorBoard(log_dir=(TB_log_path.__str__()))]
     model.fit(x_train, y_train,
               batch_size=batch_size,
               epochs=epochs,
@@ -317,6 +430,11 @@ else:
     datagen.fit(x_train)
     # Fit the model on the batches generated by datagen.flow().
     generator = datagen.flow(x_train, y_train, batch_size=batch_size)
+    if optimizer == 'L4':
+        callbacks = [on_epoch_end_callback, scheduler, lr_reducer,
+                     LRTensorBoard(log_dir=TB_log_path.__str__(), train_data=generator.__next__())]
+    else:
+        callbacks = [on_epoch_end_callback, scheduler, lr_reducer, TensorBoard(log_dir=(TB_log_path.__str__()))]
     model.fit_generator(generator=generator,
                         validation_data=(x_test, y_test),
                         steps_per_epoch=len(generator),
@@ -336,4 +454,8 @@ print("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % ("exp_name", 'best_accuracy','final
 max_acc_log_line = "%s\t%f\t%f\t%f\t%d\t%s\t%d\t%s" % (exp_name, best_acc,final_accuracy, final_loss, convergence_epoch, distribution_method, random_range, dataset_name)
 print(max_acc_log_line)
 print(max_acc_log_line, file=open(max_acc_log_path.__str__(), 'a'))
+if optimizer == 'L4':
+    if os.path.exists('../checkpoint') == False:
+        os.mkdir('../checkpoint')
+    model.save('../checkpoint/L4_' + str(epochs) + '.h5')
 # model.save('./ModelFile/'+exp_name+'.h5')
